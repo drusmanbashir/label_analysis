@@ -35,14 +35,22 @@ def get_labels(img):
 
 
 @astype(22, 0)
-def remove_organ_mask(img):
+def remove_organ_mask(img,tumour_always_present=True):
+    '''
+    tumour_always_present: Set to false if dataset can have organ-only masks with no lesions present
+    '''
+    
+
     n_labs = len(get_labels(img))
     if n_labs == 2:
         img = sitk.ChangeLabelLabelMap(img, {1: 0, 2: 1})
-    elif n_labs == 1:
-        print(
-            "only one label is present in this mask. Assuming that is tumour (and not organ). Nothing is changed."
-        )
+    elif n_labs == 1 :
+        if tumour_always_present==True:
+            print(
+                "only one label is present in this mask. Assuming that is tumour (and not organ). Nothing is changed."
+            )
+        else:
+            img = sitk.ChangeLabelLabelMap(img, {1: 0})
     else:
         print("Too many labels: {}. Which one is organ?".format(n_labs))
     return img
