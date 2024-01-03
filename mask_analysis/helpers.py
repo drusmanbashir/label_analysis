@@ -1,6 +1,8 @@
 import SimpleITK as sitk
-from fran.utils.fileio import listify
+from fastcore.basics import listify
 import ipdb
+
+from fran.utils.imageviewers import view_sitk
 
 tr = ipdb.set_trace
 
@@ -14,7 +16,7 @@ def astype(id: int, inds):  # assumes arg 0 is an image
             args = list(args)
             for id, ind in zip(ids, inds):
                 img = args[ind]
-                if img.GetPixelID() == 8 and id == 22:  # float -> label
+                if any([img.GetPixelID() == 8, img.GetPixelID() == 9]) and id == 22:  # float -> label
                     img = sitk.Cast(img, sitk.sitkUInt8)
                 if img.GetPixelID() != id:
                     img = sitk.Cast(img, id)
@@ -35,7 +37,7 @@ def get_labels(img):
 
 
 @astype(22, 0)
-def remove_organ_mask(img,tumour_always_present=True):
+def remove_organ_label(img,tumour_always_present=True):
     '''
     tumour_always_present: Set to false if dataset can have organ-only masks with no lesions present
     '''
@@ -51,6 +53,10 @@ def remove_organ_mask(img,tumour_always_present=True):
             )
         else:
             img = sitk.ChangeLabelLabelMap(img, {1: 0})
+    elif n_labs==0:
+
+        print("No labels in file ")
+
     else:
         print("Too many labels: {}. Which one is organ?".format(n_labs))
     return img
@@ -85,4 +91,5 @@ def to_int(x):
     return x
 
 
+# %%
 # %%
