@@ -15,7 +15,7 @@ import numpy as np
 import SimpleITK as sitk
 import ipdb
 import pandas as pd
-from fran.utils.sitk_utils import align_sitk_imgs
+from mask_analysis.utils import align_sitk_imgs
 
 from fran.utils.string import info_from_filename, int_to_str, strip_extension
 tr = ipdb.set_trace
@@ -185,18 +185,16 @@ if __name__ == "__main__":
 
     # df_fn = Path("/s/datasets_bkp/lits_segs_improved/segs_notes.csv")
     imgs_fldr = Path("/s/datasets_bkp/litqsmall/images")
-    df_fn = Path("/s/datasets_bkp/litqsmall/litqsmall_notes.csv")
+    df_fn = Path("/s/xnat_shadow/litq/segs_notes.csv")
     df = pd.read_csv(df_fn)
-    aa = df.case_id
-    bb= aa.str.split("_",expand=True)
-    df.case_id = bb[1]
     df.dropna(subset= ['case_id','lesion_labels'],inplace=True)
+    fldr = df_fn.parent
     # int_to_str(ĳkĳk)
 
     print(df)
 # %%
 
-    RD = RemapFromDF(df,imgs_fldr.parent)
+    RD = RemapFromDF(df,fldr)
 
     print(RD.df['case_id','lesion_labels','img_fn'])
     RD.process()

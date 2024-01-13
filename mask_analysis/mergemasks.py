@@ -6,7 +6,7 @@ from mask_analysis.helpers import *
 from pathlib import Path
 from fran.utils.helpers import *
 from fran.utils.imageviewers import *
-from fran.utils.sitk_utils import align_sitk_imgs
+from mask_analysis.utils import align_sitk_imgs
 
 from fran.utils.string import match_filenames
 
