@@ -1,6 +1,9 @@
+
+# %%
 import SimpleITK as sitk
 from fastcore.basics import listify
 import ipdb
+import numpy as np
 
 from fran.utils.imageviewers import view_sitk
 
@@ -28,12 +31,13 @@ def astype(id: int, inds):  # assumes arg 0 is an image
     return wrapper
 
 
+#dangerous as missing values will not be accounted for
 @astype(1, 0)
 def get_labels(img):
-    maxmin = sitk.MinimumMaximumImageFilter()
-    maxmin.Execute(img)
-    labs = int(maxmin.GetMaximum())
-    return list(range(1, labs + 1))
+    arr = sitk.GetArrayFromImage(img)
+    arr = np.unique(arr)
+    arr_int = [int(a) for a in arr if a != 0]
+    return arr_int
 
 
 @astype(22, 0)
@@ -63,6 +67,32 @@ def remove_organ_label(img,tumour_always_present=True):
 
 
 @astype(22, 0)
+def remove_labels(lm, labels):
+        labels = listify(labels)
+        org_type = lm.GetPixelID()
+        dici = {x: 0 for x in labels}
+        lm_cc = sitk.ChangeLabelLabelMap(to_label(lm), dici)
+        if lm_cc.GetPixelID() != org_type:
+            lm_cc = sitk.Cast(lm_cc, org_type)
+        return lm_cc
+
+
+
+def relabel(lm,remapping):
+        org_type = lm.GetPixelID()
+        lm_cc= to_label(lm)
+        lm_cc = sitk.ChangeLabelLabelMap(lm_cc,remapping)
+        try:
+            if lm_cc.GetPixelID() != org_type:
+                lm_cc = sitk.Cast(lm_cc, org_type)
+        except:
+            print("Could not recast to original pixel type {0}. Returned img is of type {1}".format(org_type, lm_cc.GetPixelID()))
+        return lm_cc
+
+
+
+
+@astype(22, 0)
 def single_label(mask, target_label):
     labs_all = get_labels(mask)
     if len(labs_all) > 1:
@@ -75,10 +105,20 @@ def single_label(mask, target_label):
     single_label = sitk.ChangeLabelLabelMap(mask, dici)
     return single_label
 
+#
+# def single_label2(mask, target_label):
+#     mask_np = sitk.GetArrayFromImage(mask)
+#     mask_np[mask_np != target_label] = 0
+#     mask_np[mask_np == target_label] = 1
+#     mask = sitk.GetImageFromArray(mask_np)
+#     return mask
+
 
 @astype(1, 0)
-def to_cc(img):
-    return sitk.ConnectedComponent(img)
+def to_cc(lm):
+        lm_cc = sitk.ConnectedComponent(lm)
+        return lm_cc
+
 
 
 @astype(22, 0)

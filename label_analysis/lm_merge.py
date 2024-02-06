@@ -1,12 +1,13 @@
 # %%
 from fastcore.basics import GetAttr, store_attr
 import SimpleITK as sitk
+from label_analysis.labelmap_overlap import LabelMapGeometry, get_1lbl_nbrhoods
 from fran.utils.fileio import maybe_makedirs
-from mask_analysis.helpers import *
+from label_analysis.helpers import *
 from pathlib import Path
 from fran.utils.helpers import *
 from fran.utils.imageviewers import *
-from mask_analysis.utils import align_sitk_imgs
+from label_analysis.utils import align_sitk_imgs
 
 from fran.utils.string import match_filenames
 
@@ -69,6 +70,61 @@ def merge_multiprocessor(fn_label1,fn_label2,output_fldr,overwrite=False):
         M.process()
     else:
         print("File {} exists. Skipping..".format(output_fname))
+
+
+class FixMulticlass_CC(LabelMapGeometry):
+    '''
+    in multiclass UNet output some lesions have areas classified as one class (e.g., benign) and other neighbouring  voxels as malignant, which is nmot possible in real life.
+    This algorithm convert 'non-dominant' (e.g. benign) voxels into 'dominant' class voxels where there is overlap
+    '''
+
+    _default = "fil"
+
+    def __init__(self, lm_fn,dom_label,overwrite=False) -> None:
+        '''
+        Whenever more than one labels are presented inside a single cc, the dom_label is assigned to all
+        '''
+        
+        store_attr('dom_label')
+        self.lm_fn = Path(lm_fn)
+        self.set_output_name()
+        if overwrite==False and self.lm_fn_out.exists():
+            print("output file already exists, skipping")
+        else:
+            lm = sitk.ReadImage(self.lm_fn)
+            super().__init__(lm)
+            _, self.nbr_binary= get_1lbl_nbrhoods(self.lm_binary, 1)
+
+    def process(self):
+        if hasattr(self,'nbrhoods'):
+            self.fix_labelmap()
+            self.save_fixed_map()
+
+
+    def set_output_name(self):
+        output_folder_prnt  = self.lm_fn.parent.parent
+        output_folder_nm = self.lm_fn.parent.name+"_mod"
+        output_folder = output_folder_prnt/output_folder_nm
+        maybe_makedirs(output_folder)
+        self.lm_fn_out = output_folder/(self.lm_fn.name)
+
+    def fix_labelmap(self):
+        self.nbrhoods.loc[~self.nbrhoods.cent.isin(self.nbr_binary.cent),'label']=self.dom_label
+        remapping  = {}
+        for row in self.nbrhoods.iterrows():
+            remapping.update({row[1].label_cc:row[1].label})
+        self.lm_cc = to_label(self.lm_cc)
+        self.lm_mod = sitk.ChangeLabelLabelMap(self.lm_cc,remapping)
+
+    def save_fixed_map(self):
+        self.lm_mod = to_int(self.lm_mod)
+        try:
+            sitk.WriteImage(self.lm_mod,self.lm_fn_out)
+        except RuntimeError as e:
+            print(e)
+            print("Saving copy of the original file to: {0}".format(self.lm_fn_out))
+            shutil.copy(self.lm_fn,self.lm_fn_out)
+
 
 
 #
