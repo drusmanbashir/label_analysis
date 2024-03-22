@@ -1,13 +1,15 @@
+
+# %%
 import SimpleITK as sitk
 from fran.utils.helpers import multiprocess_multiarg
-from label_analysis.helpers import remove_organ_mask
-from label_analysis.labelmap_overlap import LesionGeometry
+from label_analysis.helpers import remove_organ_label
+from label_analysis.overlap import LabelMapGeometry, Scorer
 from pathlib import Path
 import pandas as pd
 
-# %%
 import sys
 from fran.utils.imageviewers import view_sitk, ImageMaskViewer
+from fran.utils.string import find_file
 sys.path+=["/home/ub/code"]
 from label_analysis.helpers import to_int, to_label
 import SimpleITK as sitk
@@ -16,8 +18,8 @@ import ipdb
 
 def lesion_stat_wrapper(fn):
         img = sitk.ReadImage(fn)
-        img = remove_organ_mask(img,tumour_always_present=False)
-        L = LesionGeometry(img)
+        img = remove_organ_label(img,tumour_always_present=False)
+        L = LabelMapGeometry(img)
         L.dust(3)
         return fn,L.n_labels,L.lengths
     
@@ -67,6 +69,23 @@ if __name__ == "__main__":
 # %%
     m1=sitk.GetArrayFromImage(to_int(mask))
     ImageMaskViewer([m2,m1],data_types=['mask,mask'])
+# %%
+
+    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-787_mod")
+
+    gt_fldr = Path("/s/xnat_shadow/crc/completed/masks")
+    imgs_fldr = Path("/s/xnat_shadow/crc/completed/images")
+
+    gt_fns = list(gt_fldr.glob("*"))
 
 
+
+    case_ = "CRC075"
+    gt_fn  = find_file(case_,gt_fns)
+    pred_fn = find_file(case_,preds_fldr)
+
+# %%
+    do_radiomics=False
+    S = Scorer(gt_fn,pred_fn,img_fn=None,ignore_labels_gt=[],ignore_labels_pred=[1],save_matrices=False,do_radiomics=do_radiomics)
+    df = S.process()
 #

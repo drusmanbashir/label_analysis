@@ -86,6 +86,7 @@ def relabel(lm,remapping):
             if lm_cc.GetPixelID() != org_type:
                 lm_cc = sitk.Cast(lm_cc, org_type)
         except:
+            lm_cc = to_int(lm_cc)
             print("Could not recast to original pixel type {0}. Returned img is of type {1}".format(org_type, lm_cc.GetPixelID()))
         return lm_cc
 

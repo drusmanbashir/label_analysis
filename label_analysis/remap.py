@@ -162,6 +162,7 @@ class RemapFromDF:
 
 class RemapFromMarkup:
     def __init__(self, organ_label: int = None):
+        # organ_label, if specified. This is removed.
         store_attr()
         self.fil = sitk.LabelShapeStatisticsImageFilter()
         self.fil.SetComputeFeretDiameter(True)

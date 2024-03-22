@@ -1,12 +1,7 @@
 # %%
-import shutil
-from functools import reduce
+import time, os
 import sys
-from os import remove
-from types import NotImplementedType
-from IPython.utils.text import columnize
-
-from tqdm.notebook import tqdm
+from functools import reduce
 
 sys.path += ["/home/ub/code"]
 import itertools as il
@@ -115,7 +110,7 @@ def get_all_nbrhoods(labelmap, dusting_threshold=5):
     labels = get_labels(labelmap)
     dfs = []
     for label in labels:
-        df = get_1lbl_nbrhoods(labelmap, label, dusting_threshold=dusting_threshold)
+        _, df = get_1lbl_nbrhoods(labelmap, label, dusting_threshold=dusting_threshold)
         dfs.append(df)
     df_final = pd.concat(dfs)
     df_final.reset_index(inplace=True, drop=True)
@@ -306,7 +301,7 @@ class Scorer:
         """
         if not img_fn: assert do_radiomics==False, "To do_radiomics, provide img_fn"
         gt_fn, pred_fn =  Path(gt_fn), Path(pred_fn)
-        self.case_id = gt_fn.name.split(".")[0]
+        self.case_id = info_from_filename(gt_fn.name)['case_id']
         self.gt, self.pred = [
             sitk.ReadImage(fn) for fn in [gt_fn, pred_fn]
         ]
@@ -326,10 +321,7 @@ class Scorer:
         self.make_one_to_one_dsc()
         self.compute_overlap_overall()
         self.cont_tables()
-        if len(self.labs_gt) > 0:
-            return self.create_df_full()
-        else:
-            return self.create_dummy_df()
+        return self.create_df_full()
 
     def dust(self):
         # predicted labels <threshold max_dia will be erased
@@ -343,7 +335,7 @@ class Scorer:
 
     def compute_overlap_overall(self):
         if len(self.LG.lengths) == 0 and len(self.LP.lengths) == 0:
-            self.dsc_overall, self.jac_overall = 1.0, 1.0
+            self.dsc_overall, self.jac_overall = np.nan, np.nan
 
         elif (len(self.LG) == 0) ^ (len(self.LP) == 0):
             self.dsc_overall, self.jac_overall = 0.0, 0.0
@@ -424,12 +416,15 @@ class Scorer:
             self.fp_pred_labels = list(self.LP.nbrhoods.iloc[fp_pred_inds]["label_cc"])
 
     def gt_radiomics(self, debug):
-        if len(self.labs_gt) == 0 or self.do_radiomics == False:
+        if len(self.labs_gt) == 0 :# or self.do_radiomics == False:
+            radiomics=[{"case_id":self.case_id, "label":np.nan}]
+        elif self.do_radiomics == False:
             print("No radiomicss being done. ")
-            self.radiomics=[{"case_id":self.case_id, "gt_fn":self.gt_fn ,"label":lab} for lab in self.LG.nbrhoods['label_cc']]
+            radiomics = pd.DataFrame(columns=["case_id",  "label"])
+            # self.radiomics=[{"case_id":self.case_id, "gt_fn":self.gt_fn ,"label":lab} for lab in self.LG.nbrhoods['label_cc']]
 
         else:
-            self.radiomics = radiomics_multiprocess(
+            radiomics = radiomics_multiprocess(
                 self.img,
                 self.gt_cc_dusted,
                 self.labs_gt,
@@ -437,62 +432,9 @@ class Scorer:
                 self.params_fn,
                 debug,
             )
-
-    def create_dummy_df(self):
-
-        colnames = [
-            "case_id",
-            "gt_fn",
-            "pred_fn",
-            "gt_label",
-            "gt_label_cc",
-            "gt_length",
-            "gt_volume",
-            "gt_volume_total",
-            "pred_label",
-            "pred_label_cc",
-            "pred_length",
-            "pred_volume",
-            "pred_volume_total",
-            "dsc",
-            "fp_pred_labels",
-            "dsc_overall",
-            "jac_overall",
-        ]
-
-        fp_pred_labels = self.fp_pred_labels if len(self.fp_pred_labels) > 0 else [0]
-
-        values = [
-            [
-                self.case_id,
-                self.gt_fn,
-                self.pred_fn,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                pred_label,
-                0,
-                0,
-            ] for pred_label in fp_pred_labels
-        ]
-        # dici = {'case_id' : self.case_id, 'gt_fn':self.gt_fn,'pred_fn':self.pred_fn, 'gt_label':0, 'gt_label_cc':0, 'gt_length':0, 'gt_volume':0, 'pred_label':0 ,
-        #         'pred_label_cc' : 0, 'pred_length': 0, 'pred_volume':0,  'dsc':0,'fp_pred_labels': str(self.fp_pred_labels), 'dsc_overall':0, 'jac_overall':0}
-        df = pd.DataFrame(values, columns=colnames)
-        # colnames = ['case_id' , 'gt_fn','pred_fn', 'gt_label', 'gt_label_cc', 'gt_length', 'gt_volume', 'pred_label' , 'pred_label_cc', 'pred_length', 'pred_volume',  'dsc',
-        #    'fp_pred_labels', 'dsc_overall', 'jac_overall']
-        # vals = [ self.case_id , self.gt_fn, self.pred_fn, 0,0,0,0,0,0,0]  +[self.fp_pred_labels,0,0]
-        # df = pd.DataFrame({col:[val] for col,val in zip (colnames,vals)})
-        return df
-
+        self.radiomics = pd.DataFrame(radiomics)
     def create_df_full(self):
+
         pos_inds = np.argwhere(self.dsc_single_vals)
         fk = list(np.arange(pos_inds.shape[0]))
         pos_inds_gt = pos_inds[:, 0]
@@ -500,30 +442,31 @@ class Scorer:
 
         # gt_all = set(self.LG.nbrhoods.index)
         df_rad = pd.DataFrame(self.radiomics)
-        self.LG.nbrhoods['fk']=np.nan
+        self.LG.nbrhoods['fk']=-1# nan creates a float column
         self.LG.nbrhoods.loc[pos_inds_gt,'fk'] = fk
-        self.LG.nbrhoods.rename(mapper=lambda x:  "gt_" + x  if x!="fk" else x, axis=1, inplace=True)
-        self.LG.nbrhoods = self.LG.nbrhoods.merge(df_rad,left_on = "gt_label_cc",right_on="label",how ="outer")
+        LG_out = self.LG.nbrhoods.rename(mapper=lambda x:  "gt_" + x  if x!="fk" else x, axis=1 )
+        LG_out = df_rad.merge(LG_out, right_on = "gt_label_cc",left_on="label",how ="outer")
 
-        self.LP.nbrhoods['fk'] = np.nan
+        self.LP.nbrhoods['fk'] =-2 # nan creates a float column
         self.LP.nbrhoods.loc[pos_inds_pred,'fk'] =fk
-        self.LP.nbrhoods.rename(mapper=lambda x:  "pred_" + x  if x!="fk" else x, axis=1, inplace=True)
-
+        LP_out = self.LP.nbrhoods.rename(mapper=lambda x:  "pred_" + x  if x!="fk" else x, axis=1 )
 
         dscs = pd.DataFrame([[0,ff] for ff in fk],columns=['dsc', 'fk'])
-        dfs_all =  self.LG.nbrhoods, self.LP.nbrhoods,dscs
-        df = reduce(lambda rt, lt: pd.merge(rt, lt, on="fk", how="outer"), dfs_all)
         try:
             dscs ['dsc']= np.apply_along_axis(self.get_vals_from_indpair, 1, pos_inds)
         except:
             pass
+        dfs_all =  LG_out , LP_out ,dscs
+        df = reduce(lambda rt, lt: pd.merge(rt, lt, on="fk", how="outer"), dfs_all)
         df["pred_fn"] = self.pred_fn
+        df["gt_fn"] = self.gt_fn
         df["dsc_overall"], df["jac_overall"] = (
             self.dsc_overall,
             self.jac_overall,
         )
         df['gt_volume_total'] = self.LG.volume_total
         df['pred_volume_total'] = self.LP.volume_total
+        df['case_id'] = df['case_id'].fillna(value=self.case_id)
         if self.save_matrices == True:
             self.save_overlap_matrices()
         return df
@@ -617,11 +560,11 @@ class BatchScorer():
 
         if isinstance(gt_fns,Path):
             self.gt_fns = list(gt_fns.glob("*"))
-        self.exclude_fns = self.create_exclusion_list(partial_df,exclude_fns)
         if len(exclude_fns) > 0:
             self.gt_fns = [fn for fn in self.gt_fns if fn not in exclude_fns]
         store_attr('partial_df,output_fldr,do_radiomics,debug,ignore_labels_gt, ignore_labels_pred,dusting_threshold,preds_fldr,imgs_fldr')
-        self.match_filenames()
+        gt_fns = self.filter_gt_fns(gt_fns, partial_df, exclude_fns)
+        self.file_dicts= self.match_filenames(gt_fns)
 
     def process(self):
         dfs = []
@@ -640,19 +583,26 @@ class BatchScorer():
             )
             df = S.process(debug=self.debug)
             dfs.append(df)
-        df = pd.concat(dfs, axis=0)
+        df_final  = self.finalise_df(dfs)
+        # self.df = pd.concat(dfs, axis=0)
         print("Saving results to {}".format(self.output_fn))
-        df.to_csv(self.output_fn, index=False)
-        return df
+        df_final.to_excel(self.output_fn, index=False)
 
-    def match_filenames(self):
+    def finalise_df(self,dfs):
+        if self.partial_df is not None:
+            dfs +=self.partial_df
+        df_final = pd.concat(dfs, axis=0)
+        return df_final
+
+    def match_filenames(self,gt_fns):
         pred_fns = list(self.preds_fldr.glob("*"))
         if self.imgs_fldr: img_fns = list(imgs_fldr.glob("*.*")) 
         else: img_fns=  None
-        self.file_dicts = []
+        file_dicts = []
         for gt_fn in gt_fns:
+                case_id = info_from_filename(gt_fn.name)['case_id']
                 pred_fn = [
-                    fn for fn in pred_fns if match_filenames(gt_fn.name, fn.name) == True
+                    fn for fn in pred_fns if case_id in fn.name
                 ]
                 if len(pred_fn) != 1:
                     tr()
@@ -668,48 +618,96 @@ class BatchScorer():
                     else:
                         img_fn = img_fn[0]
                     fn_dict['img_fn'] = img_fn
-                self.file_dicts.append(fn_dict)
+                file_dicts.append(fn_dict)
+        return file_dicts
 
 
 
-    def create_exclusion_list(self,df,exclude_fns):
-        print("Not implemented exclusion")
-        pass
+
+
+    def filter_gt_fns(self,gt_fns , partial_df,exclude_fns):
+        exclude_fns =[]
+        cid_done = []
+        if partial_df is not None:
+            cid_done = list(partial_df['case_id'].unique())
+        if len(exclude_fns) > 0:
+            cid_done.append([info_from_filename(fn)['case_id'] for fn in exclude_fns])
+
+            
+        fns_pending = [fn for fn in gt_fns if info_from_filename(fn.name)['case_id'] not in cid_done]
+
+        return fns_pending
 
     @property
     def output_fn(self):
-        output_fldr = self.preds_fldr/("results")
-        maybe_makedirs(output_fldr)
-        output_fn = output_fldr.name+"_thresh{}mm_results.csv".format(self.dusting_threshold)
-        output_fn = output_fldr / output_fn
+        if self.output_fldr is None:
+            self.output_fldr = self.preds_fldr/("results")
+        maybe_makedirs(self.output_fldr)
+        output_fn = self.output_fldr.name+"_thresh{}mm_results.xlsx".format(self.dusting_threshold)
+        output_fn = self.output_fldr / output_fn
         return output_fn
-
-
 # %%
 if __name__ == "__main__":
-    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-787_mod/")
+    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-787_mod")
+    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-787_LITS-810_LITS-811_fixed_mc")
 
 # %%
-    gt_fldr = Path("/s/xnat_shadow/crc/completed/masks")
+    gt_fldr = Path("/s/xnat_shadow/crc/wxh/masks_manual_final")
     imgs_fldr = Path("/s/xnat_shadow/crc/completed/images")
 
     gt_fns = list(gt_fldr.glob("*"))
-    gt_fn = find_file(gt_fns, "CRC066")
-    pred_fn= find_file(preds_fldr.glob("*"), "CRC066")
-    img_fn= find_file(imgs_fldr.glob("*"), "CRC066")
+
+
+    results_df = pd.read_excel("/s/fran_storage/predictions/litsmc/LITS-787_LITS-810_LITS-811_fixed_mc/results/results_thresh3mm_results.xlsx",index_col=None)
+
+    results_df['case_id'] = results_df['pred_fn'].apply(lambda x: info_from_filename(Path(x).name)['case_id'])
+
+
+# %%
+
+    gt_fns.sort(key = os.path.getmtime,reverse=True)
+    files_pending = [fn for fn in gt_fns if test_modified(fn, 3)==True]
+    cids = [info_from_filename(fn.name)['case_id'] for fn in files_pending]
+
+    done = ~results_df['case_id'].isin(cids)
+    partial_df= results_df.loc[done]
+    # cid_done = set(partial_df['case_id'].values)
+    # fns_pending = [fn for fn in gt_fns if info_from_filename(fn.name)['case_id'] not in cid_done]
+
 
 # %%
     do_radiomics=False
 
-    S = Scorer(gt_fn,pred_fn,img_fn,ignore_labels_gt=[],ignore_labels_pred=[1],save_matrices=False,do_radiomics=do_radiomics)
-    df = S.process()
 # %%
-    B = BatchScorer(gt_fns,imgs_fldr=imgs_fldr,preds_fldr=preds_fldr,debug=False,do_radiomics=False)
+    B = BatchScorer(gt_fns,imgs_fldr=imgs_fldr,preds_fldr=preds_fldr,partial_df=partial_df, debug=False,do_radiomics=False)#,output_fldr=Path("/s/fran_storage/predictions/litsmc/LITS-787_mod/results"))
     B.process()
 # %%
+    df = pd.read_csv(B.output_fn)
+    excluded = list(pd.unique(df['gt_fn'].dropna()))
 # %%
+    case_subid = "CRC198"
+    gt_fn = find_file(case_subid,gt_fns) 
+    pred_fn= find_file(case_subid,preds_fldr)
 # %%
 
+    do_radiomics=False
+    S = Scorer(gt_fn,pred_fn,img_fn=None,ignore_labels_gt=[],ignore_labels_pred=[1],save_matrices=False,do_radiomics=do_radiomics)
+    df = S.process()
+# %%
+    S = Scorer(
+        gt_fn = gt_fn,
+        img_fn = None,
+        pred_fn=pred_fn,
+        ignore_labels_gt=B.ignore_labels_gt,
+        ignore_labels_pred=B.ignore_labels_pred,
+        save_matrices=False,
+        do_radiomics=B.do_radiomics,
+        dusting_threshold=B.dusting_threshold,
+    )
+
+    df = S.process(debug=False)
+
+# %%
     pos_inds = np.argwhere(S.dsc_single_vals)
     fk = list(np.arange(pos_inds.shape[0]))
     pos_inds_gt = pos_inds[:, 0]
@@ -717,34 +715,35 @@ if __name__ == "__main__":
 
     # gt_all = set(S.LG.nbrhoods.index)
     df_rad = pd.DataFrame(S.radiomics)
-    S.LG.nbrhoods['fk']=np.nan
+    S.LG.nbrhoods['fk']=-1# nan creates a float column
     S.LG.nbrhoods.loc[pos_inds_gt,'fk'] = fk
-    S.LG.nbrhoods.rename(mapper=lambda x:  "gt_" + x  if x!="fk" else x, axis=1, inplace=True)
-    S.LG.nbrhoods = S.LG.nbrhoods.merge(df_rad,left_on = "gt_label_cc",right_on="label",how ="outer")
+    LG_out = S.LG.nbrhoods.rename(mapper=lambda x:  "gt_" + x  if x!="fk" else x, axis=1 )
+    LG_out = df_rad.merge(LG_out, right_on = "gt_label_cc",left_on="label",how ="outer")
+# %%
+    exclude_fns =[]
+    cid_done = []
+    if partial_df is not None:
+        cid_done = list(partial_df['case_id'].unique())
+    if len(exclude_fns) > 0:
+        cid_done.append([info_from_filename(fn)['case_id'] for fn in exclude_fns])
 
-    S.LP.nbrhoods['fk'] = np.nan
-    S.LP.nbrhoods.loc[pos_inds_pred,'fk'] =fk
-    S.LP.nbrhoods.rename(mapper=lambda x:  "pred_" + x  if x!="fk" else x, axis=1, inplace=True)
+        
+    fns_pending = [fn for fn in gt_fns if info_from_filename(fn.name)['case_id'] not in cid_done]
 
-
-    dscs = pd.DataFrame([[0,ff] for ff in fk],columns=['dsc', 'fk'])
-    dfs_all =  S.LG.nbrhoods, S.LP.nbrhoods,dscs
-    df = reduce(lambda rt, lt: pd.merge(rt, lt, on="fk", how="outer"), dfs_all)
-    try:
-        dscs ['dsc']= np.apply_along_axis(S.get_vals_from_indpair, 1, pos_inds)
-    except:
-        pass
-    df["pred_fn"] = S.pred_fn
-    df["dsc_overall"], df["jac_overall"] = (
-        S.dsc_overall,
-        S.jac_overall,
-    )
-    df['gt_volume_total'] = S.LG.volume_total
-    df['pred_volume_total'] = S.LP.volume_total
-    if S.save_matrices == True:
-        S.save_overlap_matrices()
-   
 # %%
 
+    aa = pd.concat(dfs, axis=0)
+    self.partial_df.columns.difference(aa.columns)
+    aa.columns.difference(self.partial_df.columns)
 
-       
+    aa.drop(columns='label',inplace=True)
+
+
+    
+
+    
+
+
+    final = pd.concat([aa,self.partial_df])
+
+# %%

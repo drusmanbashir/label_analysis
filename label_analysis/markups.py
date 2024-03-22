@@ -2,7 +2,7 @@
 from pathlib import Path
 from fastcore.basics import store_attr
 
-from label_analysis.lm_overlap import LabelMapGeometry
+from label_analysis.overlap import LabelMapGeometry
 import SimpleITK as sitk
 from fran.utils.fileio import load_dict, load_json, maybe_makedirs, save_json
 from fran.utils.string import find_file, info_from_filename, replace_extension, strip_extension
