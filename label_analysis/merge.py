@@ -1,9 +1,11 @@
 # %%
 import shutil
+import functools as fl
 from fastcore.basics import GetAttr, store_attr
 import SimpleITK as sitk
+from label_analysis import remap
 from label_analysis.overlap import LabelMapGeometry, get_1lbl_nbrhoods, get_all_nbrhoods
-from fran.utils.fileio import maybe_makedirs
+from fran.utils.fileio import is_filename, maybe_makedirs
 from label_analysis.helpers import *
 from pathlib import Path
 from fran.utils.helpers import *
@@ -14,57 +16,94 @@ from typing import Union
 from fran.utils.string import find_file, match_filenames
 
 
+def merge(lm_base, lms_other:Union[sitk.Image,list],labels_lol:list =None):
+
+
+    #labels_lol:i.e.., list of lists. One set of labels per lm. If not provided, all labels in each lm are used. This is necessary as a uniform template. Some lm may not have full compliment of labels. note lm_base labels are not required
+    # those earlier in order get overwritten by those later. So lesions should be last
+    if not isinstance(lms_other,Union[tuple,list]): lms_other = [lms_other]
+    def _inner(lm2_ar,labels):
+        for label in labels:
+            lm_base_arr[lm2_ar==label]=label
+
+
+    lm_base_arr= sitk.GetArrayFromImage(lm_base)
+    lm_arrs =[ sitk.GetArrayFromImage(lm) for lm in lms_other]
+    if labels_lol is None:
+        labels_lol  = [get_labels(lm) for lm in lms_other]
+
+    lm_final = [_inner(lm_arr,labels) for lm_arr,labels in zip (lm_arrs,labels_lol)][0]
+    lm_final=sitk.GetImageFromArray(lm_final)
+    lm_final= align_sitk_imgs(lm_final,lm_base)
+    return lm_final
+
+
+def merge_pt(lm_base_arr, lm_arrs:Union[sitk.Image,list],labels_lol:list =None):
+
+    #labels_lol:i.e.., list of lists. One set of labels per lm. If not provided, all labels in each lm are used. This is necessary as a uniform template. Some lm may not have full compliment of labels. note lm_base labels are not required
+    # those earlier in order get overwritten by those later. So lesions should be last
+    if not isinstance(lm_arrs,Union[tuple,list]): lm_arrs = [lm_arrs]
+    def _inner(lm2_ar,labels):
+        for label in labels:
+            lm_base_arr[lm2_ar==label]=label
+        return lm_base_arr
+
+    if labels_lol is None:
+        labels_lol  = [lm.unique()[1:] for lm in lm_arrs]
+
+    lm_final = [_inner(lm_arr,labels) for lm_arr,labels in zip (lm_arrs,labels_lol)][0]
+    return lm_final
+
+def merge_lmfiles(lm_base, lms_other:Union[sitk.Image,list],labels_lol:list =None):
+
+    lm_base = sitk.ReadImage(lm_base)
+
+    if not isinstance(lms_other,Union[tuple,list]): lms_other = [lms_other]
+    lms_other = [sitk.ReadImage(lm) for lm in lms_other]
+    return merge(lm_base,lms_other)
+
+
+
 class MergeLabelMaps():
-    def __init__(self,lab1:Union[Path,sitk.Image],lab2:Union[Path,sitk.Image],output_fname,k_label1=1,debug=True): 
+    def __init__(self,lm_fns:list, labels:list, output_fname:Union[Path,str],remappings:list=None,file_holes:list=None ):
         '''
+        all lms must have non-overlapping labels.
         used when AI generates organ mask stored in fn_label1. User has drawn lesion masks (fn_label2). This algo will merge masks.
 
         fn_label1 : Provides label 1 (organ).  All others will be erased and holes filled
         fn_label2: Provides label 2  onwards. 
         debug: breakpoint activates if labelmap2 has a label 1.
-        k_label1: If the organ predictions have extra particles, every label other than the largest k will be removed
         '''
-        store_attr()
-        if all([isinstance(fn,str) or isinstance(fn,Path) for fn in [self.lab1,self.lab2]]): # isinstance(fn,Path):
-            self.load_images()
+        if all([isinstance(fn,str) or isinstance(fn,Path) for fn in lm_fns]): # isinstance(fn,Path):
+            self.load_images(lm_fns)
 
     def process(self):
         self.fix_lab1()
-        self.fix_lab2()
+        self.fix_lm()
         self.merge()
         self.write_output()
-    def load_images(self):
-        self.lab1 = sitk.ReadImage(self.lab1)
-        self.lab2 = sitk.ReadImage(self.lab2)
-    def fix_lab2(self):
+    def load_images(self,lm_fns):
+        self.lab1 = sitk.ReadImage(lm_fns[0])
+        self.lab2 = sitk.ReadImage(lm_fns[1])
+    def fix_lm(self,lm,remapping):
+        lm = relabel(lm,remapping)
         self.lab2 = to_int(self.lab2)
+
         self.lab2  = sitk.BinaryFillhole(self.lab2)
 
     def fix_lab1(self):
         self.lab1 = to_int(self.lab1)
         self.lab1 = sitk.Cast(self.lab1,sitk.sitkLabelUInt16)
-        self.lab1 = sitk.ChangeLabelLabelMap(self.lab1,{2:1}) # merge predicted lesions in to organ so there are no holes left.j
+        if self.remapping1:
+            self.lab1 = sitk.ChangeLabelLabelMap(self.lab1,{2:1}) # merge predicted lesions in to organ so there are no holes left.j
         self.lab1 = to_int(self.lab1)
-        if self.k_label1==1 :
-            cc = sitk.ConnectedComponent(self.lab1)
-            cc = sitk.RelabelComponent(cc)
-            self.lab1 = single_label(cc,1)
-            self.lab1 = to_int(self.lab1)
-        else:
-            tr()
         self.lab1  = sitk.BinaryFillhole(self.lab1)
     def merge(self):
-
-        lab1_ar = sitk.GetArrayFromImage(self.lab1)
-        lab2_ar = sitk.GetArrayFromImage(self.lab2)
-
         lab1_ar = sitk.GetArrayFromImage(self.lab1)
         lab2_ar = sitk.GetArrayFromImage(self.lab2)
         lab2_labels = np.unique(lab2_ar)
         lab2_labels = np.delete(lab2_labels,0)
         for label in lab2_labels:
-            if label==1 and self.debug==True:
-                tr()
             lab1_ar[lab2_ar==label]=label
 
 
@@ -194,14 +233,20 @@ if __name__ == "__main__":
     L = LabelMapGeometry(lm)
 
 # %%
+# %%
+    from label_analysis.totalseg import TotalSegmentorLabels 
+# %%
 
-    M = MergeLabelMaps(fn,fn,output_fldr/("litqsmall_00004_.nrrd"))
+    output_fldr=Path("/s/fran_storage/labelmaps_mod/tmp/")
+
+    M = MergeLabelMaps(fn1,fn2,output_fldr/(fn1))
     M.process()
 # %%
     debug=False
     maybe_makedirs(output_fldr)
     args = [[f1,f2,output_fldr, True] for f1,f2 in zip(fnames_lab1, fnames_lab2)]
     multiprocess_multiarg(merge_multiprocessor,args,debug=debug)
+# %%
 # %%
 
 

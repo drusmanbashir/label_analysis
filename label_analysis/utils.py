@@ -3,6 +3,7 @@
 from collections.abc import ItemsView
 from pathlib import Path
 from fastcore.all import is_close, listify
+from fastcore.meta import test_eq
 from neptune.types.atoms.file import Union
 import torch
 import shutil
@@ -39,18 +40,6 @@ def array_to_sitk(arr:Union[Tensor,np.ndarray]):
         arr = arr.detach().cpu()
     return sitk.GetImageFromArray(arr)
     
-
-class ReadSITK(Transform):
-    def encodes(self,x): return sitk.ReadImage(x)
-
-class ReadSITKImgMask(ItemTransform):
-    '''
-    Applied to tuple(img, mask)
-    '''
-    
-    def encodes(self,x):
-        return list(map(sitk.ReadImage, x))
-
 
 class SITKDICOMOrient(Transform):    
     '''
