@@ -240,14 +240,11 @@ class MergeTouchingLabels(LabelMapGeometry):
 
 class MergeTouchingLabelsFiles():
 
-        def __init__(self, lm_fns,output_folder=None) -> None:
-            if output_folder is None: self.set_output_folder(lm_fns[0])
-            else: self.output_folder = Path(output_folder)
-            self.lm_fns = [fn for fn in lm_fns if is_sitk_file(fn)]
 
-        def process_batch(self,lm_fns, overwrite=False):
-            lm_fns_out = self.set_output_names(lm_fns)
-            lm_fns,lm_fns_out = self.filter_existing_files(lm_fns,lm_fns_out,overwrite)
+        def process_batch(self,lm_fns,output_folder=None, overwrite=False):
+
+            lm_fns,lm_fns_out = self.filter_files(lm_fns,output_folder,overwrite)
+
             lms = self.load_images(lm_fns)
 
             lms_fixed = []
@@ -282,13 +279,19 @@ class MergeTouchingLabelsFiles():
             return cls(lm_fns,output_folder)
 
 
-        def filter_existing_files(self,lm_fns,lm_fns_out,overwrite):
+
+        def filter_files(self,lm_fns,output_folder,overwrite):
+            lm_fns = [fn for fn in lm_fns if is_sitk_file(fn)]
+            if output_folder is None: self.set_output_folder(lm_fns[0])
+            else: self.output_folder = Path(output_folder)
+            maybe_makedirs(self.output_folder)
+            lm_fns_out = self.set_output_names(lm_fns)
             if overwrite==False:
                 for fn, fn_out in zip(lm_fns, lm_fns_out):
-                    if fn_out.exists():
-                        print("File {} already exists. Skipping".format(fn))
-                        lm_fns.remove(fn)
-                        lm_fns_out.remove(fn_out)
+                    if fn_out.exists() :
+                            print("File {} already exists. Skipping".format(fn))
+                            lm_fns.remove(fn)
+                            lm_fns_out.remove(fn_out)
             return lm_fns,lm_fns_out
 
 
@@ -320,7 +323,7 @@ class MergeTouchingLabelsFiles():
 
 
 def merger_wrapper(fns):
-    M = MergeTouchingLabelsFiles(fns)
+    M = MergeTouchingLabelsFiles()
     M.process_batch(fns)
 
 def merge_multiprocessor(lm_fns,overwrite=False,n_chunks=12):
@@ -342,6 +345,8 @@ if __name__ == "__main__":
 
     preds_fldr = Path("/s/fran_storage/predictions/lidc2/LITS-911")
     lm_fns = list(preds_fldr.glob("*"))
+    # M = MergeTouchingLabelsFiles()
+    # M.process_batch(lm_fns)
     # lesion_masks_folder = Path('/s/datasets_bkp/litqsmall/sitk/masks/')
     merge_multiprocessor(lm_fns, 6)
 # %%
