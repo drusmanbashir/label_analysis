@@ -1,19 +1,20 @@
 # %%
 import shutil
 import functools as fl
+import pandas as pd
 from fastcore.basics import GetAttr, store_attr
 import SimpleITK as sitk
 from label_analysis import remap
-from label_analysis.overlap import LabelMapGeometry, get_1lbl_nbrhoods, get_all_nbrhoods
+from label_analysis.overlap import LabelMapGeometry, ScorerLabelMaps, get_1lbl_nbrhoods, get_all_nbrhoods, labels_overlap, proximity_indices
 from fran.utils.fileio import is_filename, maybe_makedirs
 from label_analysis.helpers import *
 from pathlib import Path
 from fran.utils.helpers import *
 from fran.utils.imageviewers import *
-from label_analysis.utils import align_sitk_imgs
+from label_analysis.utils import align_sitk_imgs, distance_tuples, is_sitk_file
 from typing import Union
 
-from fran.utils.string import find_file, match_filenames
+from fran.utils.string import find_file, match_filenames, strip_extension
 
 
 def merge(lm_base, lms_other:Union[sitk.Image,list],labels_lol:list =None):
@@ -123,73 +124,213 @@ def merge_multiprocessor(fn_label1,fn_label2,output_fldr,overwrite=False):
         print("File {} exists. Skipping..".format(output_fname))
 
 
-class FixMulticlass_CC(LabelMapGeometry):
+class MergeTouchingLabels(LabelMapGeometry):
     '''
-    Note: LabelMapGeometry by default ignores label 1. So this algo strips label 1 from every lm and saves it
     in multiclass UNet output some lesions have areas classified as one class (e.g., benign) and other neighbouring  voxels as malignant, which is nmot possible in real life.
     This algorithm convert 'non-dominant' (e.g. benign) voxels into 'dominant' class voxels where there is overlap
     '''
+    def __init__(self, lm,dom_label="larger",ignore_labels=[],threshold=0.1) -> None:
 
-    _default = "fil"
-
-    def __init__(self, lm_fn,dom_label,overwrite=False) -> None:
         '''
+        threshold: 0.1 if the dominant label has less than thresholded volume contribution, it will be ignored and next largest will be selected instead .
         Whenever more than one labels are presented inside a single cc, the dom_label is assigned to all
         '''
-        
-        store_attr('dom_label')
-        self.lm_fn = Path(lm_fn)
-        self.set_output_name()
-        if overwrite==False and self.lm_fn_out.exists():
-            print("output file already exists, skipping")
-        else:
-            lm = sitk.ReadImage(self.lm_fn)
-            super().__init__(lm=lm, ignore_labels=[1])
-            _, self.nbr_binary= get_1lbl_nbrhoods(self.lm_binary, 1)
-            self.process()
+        super().__init__(lm,ignore_labels)
+        self.lm_bin_cc, self.nbr_binary= get_1lbl_nbrhoods(self.lm_binary, 1)
+        store_attr()
+
 
     def process(self):
-        if not self.is_empty():
-            self.fix_labelmap()
-            self.save_fixed_map()
+        self.init_overlap_matrix()
+        self.separate_touching_gps()
+        self.rank_closest_binary_cc()
+        if self.touching_labels==True:
+            self.ccs_sharing_binaryblobs()
+            self.compute_dsc_touching_labels()
+            self.find_dom_labels()
+            remapping = self.create_remappings()
+            self.lm_out = relabel(self.lm_cc,remapping)
+            return self.lm_out
         else:
-            print("No lesions. Saving labelmap (excluding label 1, i.e., organ) to",self.lm_fn_out)
-            lm_no_organ = to_int(self.lm_org)
-            sitk.WriteImage(lm_no_organ,self.lm_fn_out)
+            return None
 
 
-    def set_output_name(self):
-        output_folder_prnt  = self.lm_fn.parent.parent
-        output_folder_nm = self.lm_fn.parent.name+"_fixed_mc"
-        output_folder = output_folder_prnt/output_folder_nm
-        maybe_makedirs(output_folder)
-        self.lm_fn_out = output_folder/(self.lm_fn.name)
+    def init_overlap_matrix(self):
+            self.dsc = np.zeros(
+            [max(1, len(self.nbrhoods)), max(1, len(self.nbr_binary))]
+        )
 
-    def fix_labelmap(self):
-        self.nbrhoods.loc[~self.nbrhoods.cent.isin(self.nbr_binary.cent),'label']=self.dom_label
-        remapping  = {}
-        for row in self.nbrhoods.iterrows():
-            try:
-                label_cc , label = row[1].label_cc.item(),  row[1].label.item()
-            except:
-                label_cc , label = row[1].label_cc,  row[1].label
-            remapping.update({label_cc:label})
-        self.lm_cc = to_label(self.lm_cc)
-        self.lm_mod = sitk.ChangeLabelLabelMap(self.lm_cc,remapping)
 
-    def save_fixed_map(self):
-        self.lm_mod = to_int(self.lm_mod)
-        try:
-            sitk.WriteImage(self.lm_mod,self.lm_fn_out)
-            print("Saved to ",self.lm_fn_out )
-        except RuntimeError as e:
-            print(e)
-            print("Saving copy of the original file to: {0}".format(self.lm_fn_out))
-            shutil.copy(self.lm_fn,self.lm_fn_out)
+    def separate_touching_gps(self):
+        self.nbrhoods['cc_group']= -1
+        self.nbr_binary['cc_group']= -1
+        self.ccs=self.nbrhoods[~self.nbrhoods.cent.isin(self.nbr_binary.cent)]
+        self.ccs['contrib']=0.0
+        self.ccs_no_change=self.nbrhoods[self.nbrhoods.cent.isin(self.nbr_binary.cent)]
 
 
 
-#
+    def rank_closest_binary_cc(self):
+        bins =self.nbr_binary[~self.nbr_binary.cent.isin(self.nbrhoods.cent)]
+        distance_matrix = np.zeros((len(bins),len(self.ccs)))
+        if len(distance_matrix)>0:
+            self.touching_labels=True
+            for ind in range(len(self.ccs)):
+                cc1 = self.ccs.iloc[ind]
+                cent =cc1.cent
+                distance_matrix[:,ind] = bins['cent'].apply(lambda x: distance_tuples(x,cent))
+                ranking = np.argmin(distance_matrix,axis=0)
+                self.ccs = self.ccs.assign(cc_group=ranking)
+
+        else:
+            self.touching_labels=False
+
+
+
+        
+    def ccs_sharing_binaryblobs(self):
+        '''
+        creates: label_pairs tuples of [cc_label,bin_label]
+        '''
+        
+        bins  = self.nbr_binary[~self.nbr_binary.cent.isin(self.nbrhoods.cent)]
+        self.label_pairs=[]
+        for ind in range(len(self.ccs)):
+            lab_cc = self.ccs.iloc[ind]['label_cc']
+            cc_group= self.ccs.iloc[ind]['cc_group']
+            lab_bin_cc = bins.iloc[cc_group]['label_cc']
+            self.label_pairs.append((int(lab_cc),int(lab_bin_cc)))
+
+
+    def compute_dsc_touching_labels(self):
+        '''
+        All ccs sharing same binary blob. Each ccs dsc wrt the binary blob is computed
+        
+        '''
+       
+        args = [[self.lm_cc, self.lm_bin_cc, *a, False] for a in self.label_pairs]
+        self.dsc = multiprocess_multiarg(
+            labels_overlap, args, 16, False, False, progress_bar=True
+        )  # multiprocess i s slow
+        for ind in range(len(self.label_pairs)):
+            label_cc = self.label_pairs[ind][0]
+            contrib = self.dsc[ind]
+            self.ccs.loc[self.ccs.label_cc==label_cc, 'contrib']= contrib
+        assert all(self.ccs.contrib>0), "Some labels are matched to the wrong binary blob and have 0 contrib their matched group which should not possible"
+
+
+    def find_dom_labels(self):
+        cc_groups = self.ccs.cc_group.unique()
+        for cc_group in cc_groups:
+            ccs_mini = self.ccs[self.ccs.cc_group==cc_group]
+            ccs_mini = ccs_mini.loc[ccs_mini['contrib']>self.threshold]
+            dom_label = ccs_mini.label.max()
+            self.ccs.loc[self.ccs.cc_group==cc_group,'label_out' ]= dom_label
+        self.ccs_no_change = self.ccs_no_change.assign(label_out=self.ccs_no_change.label)
+        self.nbrhoods_with_remapping  = pd.concat([self.ccs,self.ccs_no_change])
+
+    def create_remappings(self):
+        remapping={}
+        for i,row in self.nbrhoods_with_remapping.iterrows():
+            rem= {int(row['label_cc']):int(row['label_out']) }
+            remapping.update(rem)
+        return remapping
+        
+
+
+class MergeTouchingLabelsFiles():
+
+        def __init__(self, lm_fns,output_folder=None) -> None:
+            if output_folder is None: self.set_output_folder(lm_fns[0])
+            else: self.output_folder = Path(output_folder)
+            self.lm_fns = [fn for fn in lm_fns if is_sitk_file(fn)]
+
+        def process_batch(self,lm_fns, overwrite=False):
+            lm_fns_out = self.set_output_names(lm_fns)
+            lm_fns,lm_fns_out = self.filter_existing_files(lm_fns,lm_fns_out,overwrite)
+            lms = self.load_images(lm_fns)
+
+            lms_fixed = []
+            for i, lm in enumerate(lms) :
+                    lm_fixed = self.process_lm(lm)
+                    lms_fixed.append(lm_fixed)
+            for i,lm_fixed in enumerate(lms_fixed):
+                    lm_fn_out = lm_fns_out[i]
+                    lm_fn = lm_fns[i]
+                    if lm_fixed:
+                        self.save_fixed_map(lm_fixed,lm_fn_out)
+                    else:
+                        print("No touching labels found. Manually copying file to output folder")
+                        shutil.copy(lm_fn,lm_fn_out)
+
+        def load_images(self,lm_fns):
+            lms=[]
+            for lm_fn in lm_fns:
+                print("Processing {}".format(lm_fn))
+                lm = sitk.ReadImage(lm_fn)
+                lms.append(lm)
+            return lms
+        def process_lm(self,lm):
+                    Merger = MergeTouchingLabels(lm)
+                    lm_fixed = Merger.process()
+                    return lm_fixed
+            
+        @classmethod
+        def _from_folder(cls,lm_fldr,output_folder=None):
+            lm_fldr = Path(lm_fldr)
+            lm_fns = list(lm_fldr.glob("*"))
+            return cls(lm_fns,output_folder)
+
+
+        def filter_existing_files(self,lm_fns,lm_fns_out,overwrite):
+            if overwrite==False:
+                for fn, fn_out in zip(lm_fns, lm_fns_out):
+                    if fn_out.exists():
+                        print("File {} already exists. Skipping".format(fn))
+                        lm_fns.remove(fn)
+                        lm_fns_out.remove(fn_out)
+            return lm_fns,lm_fns_out
+
+
+        def set_output_names(self,lm_fns):
+            lm_fns_out=[]
+            for fn in lm_fns:
+                lm_fn_out = self.set_output_name(fn)
+                lm_fns_out.append(lm_fn_out)
+            return lm_fns_out
+
+
+        def set_output_name(self, lm_fn):
+            lm_fn_out = self.output_folder/(lm_fn.name)
+            return lm_fn_out
+
+        def save_fixed_map(self,lm_mod,lm_fn_out):
+            lm_mod = to_int(lm_mod)
+            maybe_makedirs(self.output_folder)
+            sitk.WriteImage(lm_mod,lm_fn_out)
+            print("Saved to ",lm_fn_out )
+
+
+        def set_output_folder(self,lm_fn):
+            lm_fn = Path(lm_fn)
+            input_fldr = lm_fn.parent
+            output_folder_prnt  = input_fldr.parent 
+            output_folder_nm =input_fldr.name+"_fixed_mc"
+            self.output_folder = output_folder_prnt/output_folder_nm
+
+
+def merger_wrapper(fns):
+    M = MergeTouchingLabelsFiles(fns)
+    M.process_batch(fns)
+
+def merge_multiprocessor(lm_fns,overwrite=False,n_chunks=12):
+            argsi = list(chunks(lm_fns,n_chunks))
+            argsi = [[a] for a in argsi]
+            multiprocess_multiarg(merger_wrapper,argsi)
+
+
+
+           #
 # fname1 =  Path('/s/datasets_bkp/litqsmall/sitk/masks/litqsmall_00000.nrrd')
 # fname2 = Path( '/s/fran_storage/predictions/lits/ensemble_LITS-408_LITS-385_LITS-383_LITS-357_LITS-413/litqsmall_00000.nrrd')
 # merge_multiprocessor(fname1,fname2,output_fldr,overwrite=True)
@@ -199,54 +340,9 @@ if __name__ == "__main__":
 
 
 
+    preds_fldr = Path("/s/fran_storage/predictions/lidc2/LITS-911")
+    lm_fns = list(preds_fldr.glob("*"))
     # lesion_masks_folder = Path('/s/datasets_bkp/litqsmall/sitk/masks/')
-    lesion_masks_folder = Path('/s/xnat_shadow/crc/srn/cases_with_findings/masks_final/')
-    fnames_lab2 = list(lesion_masks_folder.glob("*"))
-    fnames_pred = list(predicted_masks_folder.glob("*"))
-
-    output_fldr =lesion_masks_folder
+    merge_multiprocessor(lm_fns, 6)
 # %%
-    fnames_lab1 = []
-    for f in fnames_lab2:
-        f2= [fn for fn in fnames_pred if match_filenames(f.name,fn.name)==True]
-        if len(f2)!=1:
-            tr()
-        else:
-            f2=f2[0]
-        fnames_lab1.append(f2)
-    
-
-# %%
-    exc_pat = "_\d\.nii"
-    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-787")
-    preds_fldr =Path("/s/fran_storage/predictions/litsmc/LITS-787_LITS-810_LITS-811") 
-    for fn in preds_fldr.glob("*"):
-    # fn = find_file("CRC018",preds_fldr)
-
-        if fn.is_dir() or re.search(exc_pat,fn.name):
-            print("Skipping ",fn)
-        else:
-            F  = FixMulticlass_CC(fn,3,overwrite=False)
-# %%
-
-    lm = sitk.ReadImage(fn)
-    L = LabelMapGeometry(lm)
-
-# %%
-# %%
-    from label_analysis.totalseg import TotalSegmentorLabels 
-# %%
-
-    output_fldr=Path("/s/fran_storage/labelmaps_mod/tmp/")
-
-    M = MergeLabelMaps(fn1,fn2,output_fldr/(fn1))
-    M.process()
-# %%
-    debug=False
-    maybe_makedirs(output_fldr)
-    args = [[f1,f2,output_fldr, True] for f1,f2 in zip(fnames_lab1, fnames_lab2)]
-    multiprocess_multiarg(merge_multiprocessor,args,debug=debug)
-# %%
-# %%
-
 

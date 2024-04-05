@@ -32,6 +32,62 @@ import itertools
 
 # %%
 
+@str_to_path()
+def is_sitk_file(fn):
+    if fn.is_dir(): return False
+    fn_name = fn.name
+    sitk_exts = ".nii", ".nrrd"
+    for ext in sitk_exts:
+        if ext in fn_name:
+            return True
+    return False
+
+
+
+
+
+def long_short_axes(lm_cc,label:int):
+    filter_label = sitk.LabelShapeStatisticsImageFilter()
+    arr= sitk.GetArrayFromImage(lm_cc)
+    pc1_x, pc1_y,pc1_z, pc2_x, pc2_y,pc2_z, pc3_x,pc3_y,pc3_z = filter_label.GetPrincipalAxes(label)
+
+# get the center of mass
+    com_y, com_x ,com_z= filter_label.GetCentroid(1)
+
+# now trace the distance from the centroid to the edge along the principal axes
+# we use some linear algebra
+
+# get the position of each point in the image
+    v_x, v_y ,v_z= np.where(arr)
+
+# convert these positions to a vector from the centroid
+    v_pts = np.array((v_x - com_x, v_y - com_y,v_z-com_z)).T
+
+# project along the first principal component
+    distances_pc1 = np.dot(v_pts, np.array((pc1_x, pc1_y,pc1_z)))
+
+# get the extent
+    dmax_1 = distances_pc1.max()
+    dmin_1 = distances_pc1.min()
+
+# project along the second principal component
+    distances_pc2 = np.dot(v_pts, np.array((pc2_x, pc2_y,pc2_z)))
+
+# get the extent
+    dmax_2 = distances_pc2.max()
+    dmin_2 = distances_pc2.min()
+
+    ax1 = dmax_1-dmin_1
+    ax2 = dmax_2-dmin_2
+    return ax1,ax2
+
+
+def distance_tuples(cent1,cent2):
+        vec = np.array([a-b for a,b in zip(cent1,cent2)])
+        distance = np.linalg.norm(vec )
+        return distance
+        
+
 def array_to_sitk(arr:Union[Tensor,np.ndarray]):
     '''
     converts cuda to cpu. Rest is as sitk.GetImageFromArray
