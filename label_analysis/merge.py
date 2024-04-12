@@ -1,11 +1,11 @@
 # %%
 import shutil
 import functools as fl
+import itertools as il
 import pandas as pd
-from fastcore.basics import GetAttr, store_attr
+from fastcore.basics import  store_attr
 import SimpleITK as sitk
-from label_analysis import remap
-from label_analysis.overlap import LabelMapGeometry, ScorerLabelMaps, get_1lbl_nbrhoods, get_all_nbrhoods, labels_overlap, proximity_indices
+from label_analysis.overlap import LabelMapGeometry,  get_1lbl_nbrhoods,  labels_overlap
 from fran.utils.fileio import is_filename, maybe_makedirs
 from label_analysis.helpers import *
 from pathlib import Path
@@ -14,8 +14,28 @@ from fran.utils.imageviewers import *
 from label_analysis.utils import align_sitk_imgs, distance_tuples, is_sitk_file
 from typing import Union
 
-from fran.utils.string import find_file, match_filenames, strip_extension
+def bb1_inside_bb2(bb1,bb2):
+    theta = lambda x,y,z: (z-y)/(x-y)
+    bb1_start = bb1[:3]
+    bb1_end = [st+en for st,en in zip(bb1_start,bb1[3:])]
 
+    bb2_start = bb2[:3]
+    bb2_end = [st+en for st,en in zip(bb2_start,bb2[3:])]
+
+    thetas_bb1_start= [theta(x,y,z) for x,y,z in zip(bb2_start,bb2_end,bb1_start)]
+    thetas_bb1_end= [theta(x,y,z) for x,y,z in zip(bb2_start,bb2_end,bb1_end)]
+    is_inside = np.all(np.array([thetas_bb1_start,thetas_bb1_end])<=1)
+    return is_inside
+#
+# def fixed_output_folder(lm_fn):
+#             lm_fn = Path(lm_fn)
+#             input_fldr = lm_fn.parent
+#             output_folder_prnt  = input_fldr.parent 
+#             output_folder_nm =input_fldr.name+"_fixed_mc"
+#             output_folder = output_folder_prnt/output_folder_nm
+#             return output_folder
+#
+#
 
 def merge(lm_base, lms_other:Union[sitk.Image,list],labels_lol:list =None):
 
@@ -136,14 +156,18 @@ class MergeTouchingLabels(LabelMapGeometry):
         Whenever more than one labels are presented inside a single cc, the dom_label is assigned to all
         '''
         super().__init__(lm,ignore_labels)
+        self.fil.ComputeOrientedBoundingBoxOn()
+        self.fil.Execute(self.lm_cc)
         self.lm_bin_cc, self.nbr_binary= get_1lbl_nbrhoods(self.lm_binary, 1)
+        self.fil_bin = sitk.LabelShapeStatisticsImageFilter()
+        self.fil_bin.ComputeOrientedBoundingBoxOn()
+        self.fil_bin.Execute(self.lm_bin_cc)
         store_attr()
 
 
     def process(self):
         self.init_overlap_matrix()
         self.separate_touching_gps()
-        self.rank_closest_binary_cc()
         if self.touching_labels==True:
             self.ccs_sharing_binaryblobs()
             self.compute_dsc_touching_labels()
@@ -165,26 +189,10 @@ class MergeTouchingLabels(LabelMapGeometry):
         self.nbrhoods['cc_group']= -1
         self.nbr_binary['cc_group']= -1
         self.ccs=self.nbrhoods[~self.nbrhoods.cent.isin(self.nbr_binary.cent)]
-        self.ccs['contrib']=0.0
+        self.ccs = self.ccs.assign(contrib= 0.0)
         self.ccs_no_change=self.nbrhoods[self.nbrhoods.cent.isin(self.nbr_binary.cent)]
-
-
-
-    def rank_closest_binary_cc(self):
-        bins =self.nbr_binary[~self.nbr_binary.cent.isin(self.nbrhoods.cent)]
-        distance_matrix = np.zeros((len(bins),len(self.ccs)))
-        if len(distance_matrix)>0:
-            self.touching_labels=True
-            for ind in range(len(self.ccs)):
-                cc1 = self.ccs.iloc[ind]
-                cent =cc1.cent
-                distance_matrix[:,ind] = bins['cent'].apply(lambda x: distance_tuples(x,cent))
-                ranking = np.argmin(distance_matrix,axis=0)
-                self.ccs = self.ccs.assign(cc_group=ranking)
-
-        else:
-            self.touching_labels=False
-
+        if len(self.ccs)==0: self.touching_labels=False
+        else: self.touching_labels=True
 
 
         
@@ -196,11 +204,21 @@ class MergeTouchingLabels(LabelMapGeometry):
         bins  = self.nbr_binary[~self.nbr_binary.cent.isin(self.nbrhoods.cent)]
         self.label_pairs=[]
         for ind in range(len(self.ccs)):
-            lab_cc = self.ccs.iloc[ind]['label_cc']
-            cc_group= self.ccs.iloc[ind]['cc_group']
-            lab_bin_cc = bins.iloc[cc_group]['label_cc']
+            cc1 = self.ccs.iloc[ind]
+            lab_cc = int(cc1.label_cc)
+            lab_bin_cc=self.find_superset_binary_label(lab_cc,bins.label_cc)
             self.label_pairs.append((int(lab_cc),int(lab_bin_cc)))
 
+
+    def find_superset_binary_label(self,cc_lab,bin_labs):
+        bb1= self.GetBoundingBox(cc_lab)
+        for bin_lab in bin_labs:
+            bin_lab = int(bin_lab)
+            bb2= self.fil_bin.GetBoundingBox(bin_lab)
+            is_inside= bb1_inside_bb2(bb1,bb2)
+            if is_inside==True: return bin_lab
+        if is_inside==False:
+            raise ValueError('cc label {} is not apparently contained inside any binary blob'.format(cc_lab))
 
     def compute_dsc_touching_labels(self):
         '''
@@ -239,14 +257,12 @@ class MergeTouchingLabels(LabelMapGeometry):
 
 
 class MergeTouchingLabelsFiles():
-
-
+        def __init__(self, ignore_labels=[]) -> None:
+            store_attr()
+             
         def process_batch(self,lm_fns,output_folder=None, overwrite=False):
-
             lm_fns,lm_fns_out = self.filter_files(lm_fns,output_folder,overwrite)
-
             lms = self.load_images(lm_fns)
-
             lms_fixed = []
             for i, lm in enumerate(lms) :
                     lm_fixed = self.process_lm(lm)
@@ -268,7 +284,7 @@ class MergeTouchingLabelsFiles():
                 lms.append(lm)
             return lms
         def process_lm(self,lm):
-                    Merger = MergeTouchingLabels(lm)
+                    Merger = MergeTouchingLabels(lm,ignore_labels=self.ignore_labels)
                     lm_fixed = Merger.process()
                     return lm_fixed
             
@@ -285,22 +301,26 @@ class MergeTouchingLabelsFiles():
             if output_folder is None: self.set_output_folder(lm_fns[0])
             else: self.output_folder = Path(output_folder)
             maybe_makedirs(self.output_folder)
-            lm_fns_out = self.set_output_names(lm_fns)
-            if overwrite==False:
-                for fn, fn_out in zip(lm_fns, lm_fns_out):
-                    if fn_out.exists() :
-                            print("File {} already exists. Skipping".format(fn))
-                            lm_fns.remove(fn)
-                            lm_fns_out.remove(fn_out)
+            lm_fns, lm_fns_out = self.set_output_names(lm_fns,overwrite)
+            # if overwrite==False:
+            #     for fn, fn_out in zip(lm_fns, lm_fns_out):
+            #         if fn_out.exists() :
+            #                 print("File {} already exists. Skipping".format(fn))
+            #                 lm_fns.remove(fn)
+            #                 lm_fns_out.remove(fn_out)
             return lm_fns,lm_fns_out
 
 
-        def set_output_names(self,lm_fns):
-            lm_fns_out=[]
+        def set_output_names(self,lm_fns,overwrite=False):
+            lm_fns_final , lm_fns_out=[], []
             for fn in lm_fns:
                 lm_fn_out = self.set_output_name(fn)
-                lm_fns_out.append(lm_fn_out)
-            return lm_fns_out
+                if not lm_fn_out.exists() or overwrite==True:
+                    lm_fns_out.append(lm_fn_out)
+                    lm_fns_final.append(fn)
+                else:
+                   print("File {} already exists. Skipping".format(fn))
+            return lm_fns_final,lm_fns_out
 
 
         def set_output_name(self, lm_fn):
@@ -322,14 +342,24 @@ class MergeTouchingLabelsFiles():
             self.output_folder = output_folder_prnt/output_folder_nm
 
 
-def merger_wrapper(fns):
-    M = MergeTouchingLabelsFiles()
-    M.process_batch(fns)
+def merger_wrapper(fns,ignore_labels,overwrite):
+    M = MergeTouchingLabelsFiles(ignore_labels)
+    M.process_batch(lm_fns=fns,overwrite=overwrite)
 
-def merge_multiprocessor(lm_fns,overwrite=False,n_chunks=12):
+def merge_multiprocessor(lm_fns,ignore_labels =[],overwrite=False,n_chunks=12):
+            # if overwrite==False:
+            #         inferred_output_fldr= fixed_output_folder(lm_fns[0])
+            #         need_doing = []
+            #         for fn in lm_fns:
+            #             fn_name = fn.name
+            #             inferred_output_fname = inferred_output_fldr/fn_name
+            #             if not inferred_output_fname.exists():
+            #                 need_doing.append(fn)
+            #         lm_fns = list(il.compress(lm_fns, need_doing))
+            #
             argsi = list(chunks(lm_fns,n_chunks))
-            argsi = [[a] for a in argsi]
-            multiprocess_multiarg(merger_wrapper,argsi)
+            argsi = [[a,ignore_labels, overwrite] for a in argsi]
+            return multiprocess_multiarg(merger_wrapper,argsi)
 
 
 
@@ -343,11 +373,107 @@ if __name__ == "__main__":
 
 
 
-    preds_fldr = Path("/s/fran_storage/predictions/lidc2/LITS-911")
+    # preds_fldr = Path("/s/fran_storage/predictions/lidc2/LITS-913")
+    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-935")
     lm_fns = list(preds_fldr.glob("*"))
-    # M = MergeTouchingLabelsFiles()
-    # M.process_batch(lm_fns)
-    # lesion_masks_folder = Path('/s/datasets_bkp/litqsmall/sitk/masks/')
-    merge_multiprocessor(lm_fns, 6)
+    lm_fs = []
+    for fn in lm_fns:
+        if "CRC215" not in fn.name:
+            lm_fs.append(fn)
+# %%
+    ind = 1
+    lm_f2 = lm_fns[ind*5:(ind+1)*5]
+# %%
+# %%
+    M = MergeTouchingLabelsFiles(ignore_labels=[1])
+    # M.process_batch(lm_fn)
+    lm_fn = lm_f2[2]
+    lm = sitk.ReadImage(lm_fn)
+    Merger = MergeTouchingLabels(lm,ignore_labels=M.ignore_labels)
+    lm_fixed = Merger.process()
+# %%
+    merge_multiprocessor(lm_fns= lm_fs, overwrite=False,n_chunks= 4, ignore_labels =[1])
 # %%
 
+    overwrite=False
+    n_chunks = 12
+    argsi = list(chunks(lm_fns,n_chunks))
+    argsi = [[a, overwrite] for a in argsi]
+# %%
+
+    lm_fns = [fn for fn in lm_fns if is_sitk_file(fn)]
+    if output_folder is None: M.set_output_folder(lm_fns[0])
+    else: M.output_folder = Path(output_folder)
+    maybe_makedirs(M.output_folder)
+    lm_fns_out = M.set_output_names(lm_fns)
+# %%
+    if overwrite==False:
+        for fn, fn_out in zip(lm_fns, lm_fns_out):
+            if fn_out.exists() :
+                    print("File {} already exists. Skipping".format(fn))
+                    lm_fns.remove(fn)
+                    lm_fns_out.remove(fn_out)
+
+# %%
+
+# %%
+    bins  = Merger.nbr_binary[~Merger.nbr_binary.cent.isin(Merger.nbrhoods.cent)]
+    Merger.label_pairs=[]
+    for ind in range(len(Merger.ccs)):
+        lab_cc = Merger.ccs.iloc[ind]['label_cc']
+        cc_group= Merger.ccs.iloc[ind]['cc_group']
+        lab_bin_cc = bins.iloc[cc_group]['label_cc']
+        Merger.label_pairs.append((int(lab_cc),int(lab_bin_cc)))
+
+
+# %%
+    Merger.compute_dsc_touching_labels()
+    Merger.find_dom_labels()
+    remapping = Merger.create_remappings()
+    Merger.lm_out = relabel(Merger.lm_cc,remapping)
+
+# 
+# %%
+    L = LabelMapGeometry(Merger.lm_binary)
+    L.ComputeOrientedBoundingBoxOn()
+    L.Execute(L.lm_cc)
+
+    Merger.fil.ComputeOrientedBoundingBoxOn()
+    Merger.Execute(Merger.lm_cc)
+    o_origin = Merger.GetOrientedBoundingBoxOrigin(65)
+    os  = Merger.GetOrientedBoundingBoxSize(65)
+    o_end = [a+b for a,b in zip(o_origin,os)]
+
+
+
+
+    o1 = L.GetOrientedBoundingBoxOrigin(22)
+    s1 =  L.GetOrientedBoundingBoxSize(22)
+    e1 = [x+y for x,y in zip(o1,s1)]
+
+# %%
+    bin_labs = Merger.nbr_binary.label_cc.to_list()
+    cc_lab = 2
+    bb1= Merger.GetBoundingBox(cc_lab)
+    bb1_size= Merger.GetOrientedBoundingBoxSize(cc_lab)
+    for bin_lab in bin_labs:
+        bin_lab = int(bin_lab)
+        bb2_start= Merger.fil_bin.GetOrientedBoundingBoxOrigin(bin_lab)
+        bb2_size= Merger.fil_bin.GetOrientedBoundingBoxSize(bin_lab)
+        is_inside= bb1_inside_bb2(bb1_start,bb1_size,bb2_start,bb2_size)
+
+# %%
+    lm = sitk.ReadImage(lm_fn)
+
+    labels = get_labels(Merger.lm_cc)
+    remapping = {x:1 for x in labels}
+    lm_bin = relabel(Merger.lm_cc,remapping)
+    lm_bin_cc = to_cc(lm_bin)
+    labs_bin = get_labels(lm_bin_cc)
+
+    filt = sitk.LabelShapeStatisticsImageFilter()
+    filt.Execute(lm_bin_cc)
+    cents = [filt.GetCentroid(x) for x in labs_bin]
+# %%
+    sitk.WriteImage(Merger.lm_bin_cc,"bin_cc.nii.gz")
+# %%

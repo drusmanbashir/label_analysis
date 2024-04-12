@@ -60,12 +60,12 @@ class MarkupFromLabelmap():
             save_json(dic_out, outfilename)
 
 
-    def create_label_markup(self,lg, label:int, prefix:str, color:list):
+    def create_label_markup(self,lg, label:int, color:list, prefix:str, suffix=None):
         nbr_short= lg.nbrhoods.query('label=={}'.format(label))
         cps = []
         for ind in range(len(nbr_short)):
             id = str(ind+1)
-            label = "-".join([prefix,id])
+            label = "-".join([prefix,id,suffix])
             orn = list(lg.lm_org.GetDirection())
             lesion = nbr_short.iloc[ind]
             pos =  list(lesion.cent)
@@ -134,7 +134,7 @@ class MarkupDetectionOnly(MarkupFromLabelmap):
                 str_rep = schema_active['str']
                 color = schema_active['color']
                 prefix = "_".join([case_props['proj_title'],case_props['case_id'],str_rep ])
-                markup = self.create_label_markup(lg, label, prefix,color)
+                markup = self.create_label_markup(lg, label, color,prefix,"AI")
                 markups.append(markup)
             print("Writing markup to",outfilename)
             dic_out = self.main_dict.copy()
@@ -149,7 +149,7 @@ if __name__ == "__main__":
 
     M = MarkupDetectionOnly(ignore_labels=[],dusting_threshold=0)
     # preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-787_mod/")
-    preds_fldr = Path("/s/fran_storage/predictions/lidc2/LITS-911/")
+    preds_fldr = Path("/s/fran_storage/predictions/lidc2/LITS-913_fixed_mc/")
     lm_fns = list(preds_fldr.glob("*.nii.gz"))
     # lm_fn = find_file("CRC084", lm_fns)
     # lm_fn = "/s/fran_storage/predictions/lidc2/LITS-913/lung_038.nii.gz"
@@ -180,6 +180,6 @@ if __name__ == "__main__":
     str_rep = schema_active['str']
     color = schema_active['color']
     prefix = "_".join([case_props['proj_title'],case_props['case_id'],str_rep ])
-    markup = M.create_label_markup(lg, label, prefix,color)
+    markup = M.create_label_markup(lg, label, color,prefix)
 
 # %%

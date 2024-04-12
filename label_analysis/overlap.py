@@ -4,6 +4,8 @@ import sys
 import time
 from functools import reduce
 
+from label_analysis.utils import is_sitk_file
+
 sys.path += ["/home/ub/code"]
 import itertools as il
 from pathlib import Path
@@ -11,12 +13,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
-import six
 from fastcore.basics import GetAttr, store_attr
 from label_analysis.helpers import *
-from radiomics import featureextractor, getFeatureClasses
 
-from fran.transforms.totensor import ToTensorT
 from fran.utils.fileio import maybe_makedirs
 from fran.utils.helpers import *
 from fran.utils.imageviewers import *
@@ -34,7 +33,7 @@ def keep_largest(onedarray):
 
 
 @astype([5, 5], [0, 1])
-def labels_overlap(gt_cc, pred_cc, lab_gt, lab_pred,compute_jaccard=True):
+def labels_overlap(gt_cc, pred_cc, lab_gt, lab_pred, compute_jaccard=True):
     gt_all_labels = get_labels(gt_cc)
     assert (
         lab_gt in gt_all_labels
@@ -491,7 +490,7 @@ class ScorerLabelMaps:
         return df
 
 
-class ScorerFiles():
+class ScorerFiles:
     """
     input image, mask, and prediction to compute total dice, lesion-wise dice,  and lesion-wise radiomics (based on mask)
     """
@@ -517,7 +516,7 @@ class ScorerFiles():
         if not img_fn:
             assert do_radiomics == False, "To do_radiomics, provide img_fn"
         gt_fn, pred_fn = Path(gt_fn), Path(pred_fn)
-        self.case_id = info_from_filename(gt_fn.name,full_caseid=True)["case_id"]
+        self.case_id = info_from_filename(gt_fn.name, full_caseid=True)["case_id"]
         self.gt, self.pred = [sitk.ReadImage(fn) for fn in [gt_fn, pred_fn]]
         self.img = sitk.ReadImage(img_fn) if img_fn else None
 
@@ -807,7 +806,7 @@ class BatchScorer:
         for fn_dict in self.file_dicts:
             gt_fn, pred_fn, img_fn = fn_dict.values()
             print("processing {}".format(gt_fn))
-            S = Scorer(
+            S = ScorerFiles(
                 gt_fn=gt_fn,
                 img_fn=img_fn,
                 pred_fn=pred_fn,
@@ -816,6 +815,7 @@ class BatchScorer:
                 save_matrices=False,
                 do_radiomics=self.do_radiomics,
                 dusting_threshold=self.dusting_threshold,
+
             )
             df = S.process(debug=self.debug)
             dfs.append(df)
@@ -887,16 +887,17 @@ class BatchScorer:
 
 # %%
 if __name__ == "__main__":
-    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-787_mod")
     preds_fldr = Path(
         "/s/fran_storage/predictions/litsmc/LITS-787_LITS-810_LITS-811_fixed_mc"
     )
+    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc")
 
 # %%
-    gt_fldr = Path("/s/xnat_shadow/crc/wxh/masks_manual_final")
-    imgs_fldr = Path("/s/xnat_shadow/crc/completed/images")
-
+    gt_fldr = Path("/s/xnat_shadow/crc/wxh/lms_manual_final")
     gt_fns = list(gt_fldr.glob("*"))
+    gt_fns = [fn for fn in gt_fns if is_sitk_file(fn)]
+
+    imgs_fldr = Path("/s/xnat_shadow/crc/completed/images")
 
     results_df = pd.read_excel(
         "/s/fran_storage/predictions/litsmc/LITS-787_LITS-810_LITS-811_fixed_mc/results/results_thresh3mm_results.xlsx",
@@ -923,7 +924,7 @@ if __name__ == "__main__":
     imgs_t6 = list(t6_fldr.glob("*"))
     # imgs_t6 = imgs_t6[:20]
     gt_fns = imgs_t6
-    preds_fldr = Path("/s/fran_storage/predictions/lidc2/LITS-911/")
+    preds_fldr = Path("/s/fran_storage/predictions/lidc2/LITS-913_fixed_mc")
 
 # %%
 
@@ -934,8 +935,8 @@ if __name__ == "__main__":
     B = BatchScorer(
         gt_fns,
         preds_fldr=preds_fldr,
-        ignore_labels_gt=[],
-        ignore_labels_pred=[],
+        ignore_labels_gt=[1],
+        ignore_labels_pred=[1],
         imgs_fldr=None,
         partial_df=partial_df,
         debug=False,
@@ -957,69 +958,5 @@ if __name__ == "__main__":
     do_radiomics = False
 # %%
     gt, pred = [sitk.ReadImage(fn) for fn in [gt_fn, pred_fn]]
-# %%
-
-    LG = LabelMapGeometry(gt, ignore_labels_gt)
-    LP = LabelMapGeometry(pred, ignore_labels_pred)
-# %%
-    S = Scorer(
-        gt_fn,
-        pred_fn,
-        img_fn=None,
-        ignore_labels_gt=[],
-        ignore_labels_pred=[],
-        save_matrices=False,
-        do_radiomics=do_radiomics,
-    )
-    df = S.process()
-# %%
-    S = Scorer(
-        gt_fn=gt_fn,
-        img_fn=None,
-        pred_fn=pred_fn,
-        ignore_labels_gt=B.ignore_labels_gt,
-        ignore_labels_pred=B.ignore_labels_pred,
-        save_matrices=False,
-        do_radiomics=B.do_radiomics,
-        dusting_threshold=B.dusting_threshold,
-    )
-
-    df = S.process(debug=False)
-
-# %%
-    pos_inds = np.argwhere(S.dsc_single_vals)
-    fk = list(np.arange(pos_inds.shape[0]))
-    pos_inds_gt = pos_inds[:, 0]
-    pos_inds_pred = pos_inds[:, 1]
-
-    # gt_all = set(S.LG.nbrhoods.index)
-    df_rad = pd.DataFrame(S.radiomics)
-    S.LG.nbrhoods["fk"] = -1  # nan creates a float column
-    S.LG.nbrhoods.loc[pos_inds_gt, "fk"] = fk
-    LG_out = S.LG.nbrhoods.rename(
-        mapper=lambda x: "gt_" + x if x != "fk" else x, axis=1
-    )
-    LG_out = df_rad.merge(LG_out, right_on="gt_label_cc", left_on="label", how="outer")
-# %%
-    exclude_fns = []
-    cid_done = []
-    if partial_df is not None:
-        cid_done = list(partial_df["case_id"].unique())
-    if len(exclude_fns) > 0:
-        cid_done.append([info_from_filename(fn)["case_id"] for fn in exclude_fns])
-
-    fns_pending = [
-        fn for fn in gt_fns if info_from_filename(fn.name)["case_id"] not in cid_done
-    ]
-
-# %%
-
-    aa = pd.concat(dfs, axis=0)
-    self.partial_df.columns.difference(aa.columns)
-    aa.columns.difference(self.partial_df.columns)
-
-    aa.drop(columns="label", inplace=True)
-
-    final = pd.concat([aa, self.partial_df])
 
 # %%
