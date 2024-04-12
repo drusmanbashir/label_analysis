@@ -890,7 +890,7 @@ if __name__ == "__main__":
     preds_fldr = Path(
         "/s/fran_storage/predictions/litsmc/LITS-787_LITS-810_LITS-811_fixed_mc"
     )
-    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc")
+    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-935_fixed_mc")
 
 # %%
     gt_fldr = Path("/s/xnat_shadow/crc/wxh/lms_manual_final")
