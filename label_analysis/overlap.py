@@ -29,6 +29,13 @@ np.set_printoptions(linewidth=250)
 np.set_printoptions(formatter={"float": lambda x: "{0:0.2f}".format(x)})
 
 
+
+def fk_generator(start=0):
+    key = start
+    while True:
+        yield key
+        key+=1
+
 def keep_largest(onedarray):
     largest = onedarray.max()
     onedarray[onedarray < largest] = 0
@@ -469,7 +476,7 @@ class ScorerFiles:
     def _dsc_multilabel(self,prox_labels):
             args = [[self.LG.lm_cc, self.LP.lm_cc, *a] for a in prox_labels]
             d = multiprocess_multiarg(
-                labels_overlap, args, 32, False, False, progress_bar=True
+                labels_overlap, args, 16, False, False, progress_bar=True
             )  # multiprocess i s slow
             return d
 
@@ -662,61 +669,6 @@ class ScorerAdvanced(ScorerFiles):
 
 
 
-    def recompute_overlap_perlesion(self):
-        #will merge lesions which touch as per LITS article
-        m_labs_matched = np.count_nonzero(self.dsc, 0)
-        pred_inds_single = np.argwhere(m_labs_matched == 1).flatten().tolist()
-        pred_inds_multi = np.argwhere(m_labs_matched > 1)
-        pred_inds_multi = pred_inds_multi.flatten().tolist()
-
-        gt_inds_single = self.corresponding_gt_inds(pred_inds_single)
-        gt_inds_single = [list(a)[0] for a in gt_inds_single]
-        self.dsc_single = self.dsc[gt_inds_single,pred_inds_single].tolist()
-
-        gt_inds_multi = self.corresponding_gt_inds(pred_inds_multi)
-        inds = np.tril_indices(len(gt_inds_multi),-1)
-        keep_inds=[True]*len(gt_inds_multi)
-        gt_supersets = []
-        for x,y in zip(*inds):
-            set1 = gt_inds_multi[x]
-            set2  = gt_inds_multi[y]
-            if len(set1.intersection(set2))>0:
-                    keep_inds[x]=False
-                    keep_inds[y]=False
-                    gt_supersets.append(set1.union(set2))
-        gt_inds_multi = list(il.compress(gt_inds_multi,keep_inds))  + gt_supersets
-        pred_inds_multi = []
-        for gt_gp in gt_inds_multi:
-            pred_gp=[]
-            for gt_ind in gt_gp:
-            # gt_ind = list(gt_gp)[x]
-                pred_inds = np.argwhere(self.dsc[gt_ind,:]>0)
-                pred_gp.extend(pred_inds.flatten().tolist())
-            pred_gp = set(pred_gp)
-            pred_inds_multi.append(pred_gp)
-
-        self.gt_labs_121 = inds_to_labels(gt_inds_single)
-        pred_labs_single = inds_to_labels(pred_inds_single)
-
-        self.pred_inds_all_matched  = pred_inds_single+pred_inds_multi
-        pred_remaps, pred_labs_multi = self.dsc_gp_remapping(pred_inds_multi)
-        self.pred_labs_all_matched  = pred_labs_single+pred_labs_multi
-        self.pred_labs_unmatched = set(self.LP.labels).difference(set(self.pred_labs_all_matched))
-
-        gt_remaps, self.gt_labs_m2m = self.dsc_gp_remapping(gt_inds_multi)
-        self.gt_labs_all_matched = self.gt_labs_121+self.gt_labs_m2m
-        self.gt_inds_all_matched = gt_inds_single+gt_inds_multi
-        self.gt_labs_unmatched = set(self.LG.labels).difference(set(self.gt_labs_all_matched))
-
-        self.LG.relabel(gt_remaps)
-        self.LP.relabel(pred_remaps)
-
-        prox_labels= list(zip(self.gt_labs_m2m,pred_labs_multi))
-        dsc_jac_multi = self._dsc_multilabel(prox_labels)
-        self.dsc_multi = [a[0] for a in dsc_jac_multi]
-
-
-
     def dsc_gp_remapping(self,dsc_gps):
         remapping = {}
         dest_labels=[]
@@ -727,6 +679,75 @@ class ScorerAdvanced(ScorerFiles):
             maps = {lab:int(main_lab) for lab in gp}
             remapping.update(maps)
         return remapping,dest_labels
+
+    def recompute_overlap_perlesion(self):
+
+        row_counts = np.count_nonzero(self.dsc, 1)
+        col_counts = np.count_nonzero(self.dsc, 0)
+        
+        pred_inds_m21=np.argwhere(col_counts>1).flatten().tolist()
+        pred_inds_12x = np.argwhere(col_counts== 1).flatten().tolist()
+        gt_inds_12m = np.argwhere(row_counts>1).flatten().tolist()
+
+        fk_gen = fk_generator(0)
+        self.dsc_single=[]
+        fks_121 , pred_inds_121,gt_inds_121 = [],[], []
+        for pred_ind in pred_inds_12x:
+            # pred_ind = pred_inds_x21[ind]
+            row_ind = np.argwhere(self.dsc[:,pred_ind]>0)
+            if np.count_nonzero(self.dsc[row_ind,:])==1:
+                ind_pair = {'gt_ind':row_ind.item(), 'pred_ind':pred_ind}
+                pred_ind_121 = pred_ind
+                gt_ind_121 =row_ind.item()
+                gt_inds_121.append(row_ind.item())
+                pred_inds_121.append(pred_ind)
+                self.dsc_single.append(self.dsc[gt_ind_121,pred_ind_121])
+                fks_121.append(next(fk_gen))
+
+        gt_inds_m21 = self.corresponding_gt_inds(pred_inds_m21)
+        inds = np.tril_indices(len(gt_inds_m21),-1)
+        keep_inds=[True]*len(gt_inds_m21)
+        gt_supersets = []
+        for x,y in zip(*inds):
+            set1 = gt_inds_m21[x]
+            set2  = gt_inds_m21[y]
+            if len(set1.intersection(set2))>0:
+                    keep_inds[x]=False
+                    keep_inds[y]=False
+                    gt_supersets.append(set1.union(set2))
+        self.gt_inds_m2m = list(il.compress(gt_inds_m21,keep_inds))  + gt_supersets
+
+        pred_inds_m2m ,fks_m2m= [],[]
+        # gt_inds = gt_inds_m2m[0]
+        for gt_inds in self.gt_inds_m2m:
+            gt_inds = list(gt_inds)
+            pred_inds = set(np.argwhere(self.dsc[gt_inds,:])[:,1])
+            pred_inds_m2m.append(pred_inds)
+            fks_m2m.append(next(fk_gen))
+
+
+        self.gt_labs_121 = inds_to_labels(gt_inds_121)
+        pred_labs_121 = inds_to_labels(pred_inds_121)
+
+
+        gt_remaps, self.gt_labs_m2m = self.dsc_gp_remapping(self.gt_inds_m2m)
+        pred_remaps, pred_labs_m2m = self.dsc_gp_remapping(pred_inds_m2m)
+
+        self.LG.relabel(gt_remaps)
+        self.LP.relabel(pred_remaps)
+
+        self.pred_inds_all_matched  = pred_inds_121+pred_inds_m21
+        self.pred_labs_all_matched  = pred_labs_121+pred_labs_m2m
+        self.pred_labs_unmatched = set(self.LP.labels).difference(set(self.pred_labs_all_matched))
+
+        self.gt_inds_all_matched = gt_inds_121 +gt_inds_m21
+        self.gt_labs_all_matched = self.gt_labs_121+self.gt_labs_m2m
+        self.fks = fks_121+fks_m2m
+        self.gt_labs_unmatched = set(self.LG.labels).difference(set(self.gt_labs_all_matched))
+
+        prox_labels= list(zip(self.gt_labs_m2m,pred_labs_m2m))
+        dsc_jac_multi = self._dsc_multilabel(prox_labels)
+        self.dsc_multi = [a[0] for a in dsc_jac_multi]
 
     def insert_fks(self, df,dummy_fk,fks,dsc_gp_inds,dsc_gp_labels,dsc_labels_unmatched):
         colnames = ['label', 'cent','length','volume','label_cc', 'fk']

@@ -3,6 +3,8 @@
 .RData
 .Ruserdata
 results
+__pycache__/
+*.py[cod]
 *.csv
 *.np
 *.pt
