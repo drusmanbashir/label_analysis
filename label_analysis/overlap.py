@@ -682,6 +682,7 @@ class ScorerAdvanced(ScorerFiles):
 
     def recompute_overlap_perlesion(self):
 
+        #get indices of 121 labels and many21 etc
         row_counts = np.count_nonzero(self.dsc, 1)
         col_counts = np.count_nonzero(self.dsc, 0)
         
@@ -729,6 +730,8 @@ class ScorerAdvanced(ScorerFiles):
         self.gt_labs_121 = inds_to_labels(gt_inds_121)
         pred_labs_121 = inds_to_labels(pred_inds_121)
 
+
+        #create remappings
 
         gt_remaps, self.gt_labs_m2m = self.dsc_gp_remapping(self.gt_inds_m2m)
         pred_remaps, pred_labs_m2m = self.dsc_gp_remapping(pred_inds_m2m)
