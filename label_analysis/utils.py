@@ -1,10 +1,8 @@
-
 # %%
-from collections.abc import ItemsView
+from typing import Union
 from pathlib import Path
 from fastcore.all import is_close, listify
 from fastcore.meta import test_eq
-from neptune.types.atoms.file import Union
 import torch
 import shutil
 from torch import nn
@@ -33,7 +31,7 @@ import itertools
 # %%
 
 @str_to_path()
-def is_sitk_file(fn):
+def is_sitk_file(fn: Path):
     if fn.is_dir(): return False
     fn_name = fn.name
     sitk_exts = ".nii", ".nrrd"

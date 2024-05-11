@@ -1,3 +1,5 @@
+
+# %%
 from label_analysis.helpers import get_labels, relabel
 from label_analysis.merge import merge
 import pandas as pd
@@ -40,6 +42,7 @@ class TotalSegmenterLabels():
     def all(self):return list(range(1,118))
 
 
+# %%
 
 if __name__ == "__main__":
     from fran.managers.project import Project

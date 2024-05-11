@@ -10,27 +10,12 @@ import SimpleITK as sitk
 from fastcore.basics import store_attr
 from label_analysis.helpers import *
 from label_analysis.overlap import (LabelMapGeometry, get_1lbl_nbrhoods,
-                                    labels_overlap)
-from label_analysis.utils import align_sitk_imgs, distance_tuples, is_sitk_file
+                                    labels_overlap )
+from label_analysis.utils import align_sitk_imgs,  is_sitk_file
 
 from fran.utils.fileio import is_filename, maybe_makedirs
 from fran.utils.helpers import *
 from fran.utils.imageviewers import *
-
-
-def bb1_inside_bb2(bb1,bb2):
-    theta = lambda x,y,z: (z-y)/(x-y)
-    bb1_start = bb1[:3]
-    bb1_end = [st+en for st,en in zip(bb1_start,bb1[3:])]
-
-    bb2_start = bb2[:3]
-    bb2_end = [st+en for st,en in zip(bb2_start,bb2[3:])]
-
-    thetas_bb1_start= [theta(x,y,z) for x,y,z in zip(bb2_start,bb2_end,bb1_start)]
-    thetas_bb1_end= [theta(x,y,z) for x,y,z in zip(bb2_start,bb2_end,bb1_end)]
-    thetas = np.array([thetas_bb1_start,thetas_bb1_end])
-    is_inside = np.all((thetas >=0) & (thetas <=1))
-    return is_inside
 #
 # def fixed_output_folder(lm_fn):
 #             lm_fn = Path(lm_fn)
@@ -410,13 +395,17 @@ def merge_multiprocessor(lm_fns,ignore_labels =[],overwrite=False,n_chunks=12):
 # merge_multiprocessor(fname1,fname2,output_fldr,overwrite=True)
 # %%
 if __name__ == "__main__":
-
-
-
-
     # preds_fldr = Path("/s/fran_storage/predictions/lidc2/LITS-913")
-    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-935")
+    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-940")
     lm_fns = list(preds_fldr.glob("*"))
+# %%
+    lg= sitk.ReadImage(fn2)
+    LG = LabelMapGeometry(lg)
+# %%
+    f2 = sitk.LabelShapeStatisticsImageFilter()
+    f2.ComputeOrientedBoundingBoxOn()
+    f2.Execute(lg)
+    f2.GetBoundingBox(1)
 # %%
     ind = 1
     lm_f2 = lm_fns[ind*5:(ind+1)*5]
@@ -427,7 +416,8 @@ if __name__ == "__main__":
     lm = sitk.ReadImage(lm_fn)
     M.process_batch(lm_fn)
 # %%
-    merge_multiprocessor(lm_fns= lm_fns, overwrite=False,n_chunks= 4, ignore_labels =[1])
+    overwrite=False
+    merge_multiprocessor(lm_fns= lm_fns, overwrite=overwrite,n_chunks= 4, ignore_labels =[1])
 # %%
     Merger = MergeTouchingLabels(lm,ignore_labels=[1])
     lm_fixed = Merger.process()
@@ -491,5 +481,5 @@ if __name__ == "__main__":
 # %%
 
 
-    dsc_scores = {'lm_binary':}
+
 # %%

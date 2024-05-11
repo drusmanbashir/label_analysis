@@ -3,7 +3,7 @@ from pathlib import Path
 from fastcore.basics import store_attr
 
 from label_analysis.helpers import get_labels, relabel, single_label
-from label_analysis.overlap import LabelMapGeometry
+from label_analysis.geometry import LabelMapGeometry
 import SimpleITK as sitk
 from fran.utils.fileio import load_dict, load_json, maybe_makedirs, save_json
 from fran.utils.string import find_file, info_from_filename, replace_extension, strip_extension
@@ -151,6 +151,7 @@ if __name__ == "__main__":
     # preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-787_mod/")
     preds_fldr = Path("/s/fran_storage/predictions/lidc2/LITS-913_fixed_mc/")
     lm_fns = list(preds_fldr.glob("*.nii.gz"))
+    lm_fns = ["/s/xnat_shadow/crc/lms_manual_final/crc_CRC138_20180812_Abdomen3p0I30f3.nii.gz"]
     # lm_fn = find_file("CRC084", lm_fns)
     # lm_fn = "/s/fran_storage/predictions/lidc2/LITS-913/lung_038.nii.gz"
     for lm_fn in lm_fns:

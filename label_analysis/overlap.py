@@ -4,7 +4,10 @@ import sys
 import time
 from functools import reduce
 
+from label_analysis.geometry import LabelMapGeometry
 from label_analysis.utils import is_sitk_file
+
+from dicom_utils.capestart_related import find_files_from_list
 
 sys.path += ["/home/ub/code"]
 import itertools as il
@@ -51,15 +54,6 @@ def labels_overlap(gt_cc, pred_cc, lab_gt, lab_pred, compute_jaccard=True):
         return dsc
 
 
-def remap_single_label(lm, target_label, starting_ind):
-    lm_tmp = single_label(lm, target_label)
-    lm_tmp = to_cc(lm_tmp)
-    labs = get_labels(lm_tmp)
-    remapping = {l: l + starting_ind for l in labs}
-    lm_tmp = relabel(lm_tmp, remapping)
-    lm_tmp = to_label(lm_tmp)
-    return lm_tmp, list(remapping.values())
-
 
 def append_empty_rows(dataframe, n):
     for i in range(n):
@@ -83,6 +77,17 @@ def proximity_indices(df_lm1, df_lm2):
             sum_radii = gl_rad + pl_rad
             proximal = sum_radii > dist_normed
             proximity_matrix[i, j] = proximal
+    proximal_indices = np.transpose(proximity_matrix.nonzero())
+    return proximal_indices
+
+
+def proximity_indices2(bboxes1,bboxes2):
+    proximity_matrix = np.zeros([len(bboxes1), len(bboxes2)])
+    for i in range(len(bboxes1)):
+        bbox1 = bboxes1[i]
+        for j, bbox2 in enumerate(bboxes2):
+            intersects =  bb1_intersects_bb2(bbox1,bbox2)
+            proximity_matrix[i, j] = intersects
     proximal_indices = np.transpose(proximity_matrix.nonzero())
     return proximal_indices
 
@@ -149,145 +154,6 @@ def radiomics_multiprocess(img, mask, labels, mask_fn, params_fn, debug=False):
     )
     return radiomics
 
-
-class LabelMapGeometry(GetAttr):
-    """
-    lm: can have multiple labels
-    img: greyscale sitk image. Default: None. If provided, processes per-label radiomics
-    """
-
-    _default = "fil"
-
-    def __init__(self, lm: sitk.Image, ignore_labels=[], img=None):
-        self.fil = sitk.LabelShapeStatisticsImageFilter()
-
-        if len(ignore_labels) > 0:
-            remove_labels = {l: 0 for l in ignore_labels}
-            lm = relabel(lm, remove_labels)
-        self.lm_org = lm
-        self.create_lm_binary()
-        self.create_lm_cc()  # creates ordered labelmap from original labels and a key mapping
-        self.execute_filter()
-        self.calc_geom()
-
-    def create_lm_binary(self):
-        lm_tmp = self.lm_org
-        lm_tmp = to_label(lm_tmp)
-        self.lm_binary = sitk.LabelMapToBinary(lm_tmp)
-
-    def create_lm_cc(self):
-        lms = []
-        key = {}
-        start_ind = 0
-        labels_org = get_labels(self.lm_org)
-        if len(labels_org) > 0:
-            for label in labels_org:
-                lm1, labs = remap_single_label(self.lm_org, label, start_ind)
-                k = {l: label for l in labs}
-                start_ind = max(labs)
-                lms.append(lm1)
-                key.update(k)
-            merger = sitk.MergeLabelMapFilter()
-            merger.SetMethod(0)
-            self.lm_cc = merger.Execute(*lms)
-            self.key = key
-        else:
-            print("Empty labelmap")
-            self.lm_cc = sitk.Image()
-
-    def calc_geom(self):
-        columns = ["label", "label_cc", "cent", "rad", "length", "volume"]
-        vals_all = []
-        if hasattr(self, "key"):
-            for key, value in self.key.items():
-                centroid = self.GetCentroid(key)
-                radius = self.GetEquivalentSphericalRadius(key)
-                vals = [
-                    value,
-                    key,
-                    centroid,
-                    radius,
-                    self.lengths[key],
-                    self.volumes[key],
-                ]
-                vals_all.append(vals)
-        else:
-            vals_all.append(
-                [
-                    0,
-                ]
-                * 6
-            )
-        self.nbrhoods = pd.DataFrame(data=vals_all, columns=columns)
-
-    def dust(self, dusting_threshold):
-        inds_small = [l < dusting_threshold for l in self.lengths.values()]
-        self.labels_small = list(il.compress(self.labels, inds_small))
-        self._remove_labels(self.labels_small)
-
-    def _remove_labels(self, labels):
-        dici = {x: 0 for x in labels}
-        print("Removing labels {0}".format(labels))
-        self.relabel(dici)
-        self.nbrhoods = self.nbrhoods[~self.nbrhoods["label_cc"].isin(labels)]
-        self.nbrhoods.reset_index(inplace=True, drop=True)
-        for l in labels:
-            del self.key[l]
-
-    def execute_filter(self):
-        self.lm_cc = to_int(self.lm_cc)
-        self.fil.Execute(self.lm_cc)
-
-    def relabel(self, remapping):
-        self.lm_cc = to_label(self.lm_cc)
-        self.lm_cc = sitk.ChangeLabelLabelMap(self.lm_cc, remapping)
-        self.execute_filter()
-
-    def is_empty(self):
-        return True if self.__len__() == 0 else False
-
-    def __str__(self) -> str:
-        pass
-
-    @property
-    def labels(self):
-        return self.GetLabels()
-
-    @property
-    def labels_unique(self):
-        return list(set(self.key.values()))
-
-    def __len__(self):
-        return len(self.labels)
-
-    @property
-    def volumes(self):
-        self._volumes = {x: self.GetPhysicalSize(x) * 1e-3 for x in self.labels}
-        return self._volumes
-
-    @property
-    def volume_total(self):
-        return sum(self.volumes.values())
-
-    @property
-    def lengths(self):
-        self._lengths = {
-            x: max(self.GetEquivalentEllipsoidDiameter(x)) for x in self.labels
-        }
-        return self._lengths
-
-    @property
-    def ferets(self):
-        self.fil.ComputeFeretDiameterOn()
-        self.execute_filter()
-        self._ferets = {x: self.GetFeretDiameter(x) for x in self.labels}
-        return self._ferets
-
-    @property
-    def centroids(self):
-        return [np.array(self.fil.GetCentroid(x)) for x in self.labels]
-
-
 class ScorerLabelMaps:
     """
     input image, mask, and prediction to compute total dice, lesion-wise dice,  and lesion-wise radiomics (based on mask)
@@ -338,9 +204,7 @@ class ScorerLabelMaps:
     def dust(self):
         # predicted labels <threshold max_dia will be erased
         self.LG.dust(self.dusting_threshold)  # sanity check
-        self.gt_cc_dusted = self.LG.lm_cc
         self.LP.dust(self.dusting_threshold)
-        self.pred_cc_dusted = self.LP.lm_cc
 
         self.labs_pred = self.LP.labels
         self.labs_gt = self.LG.labels
@@ -369,7 +233,7 @@ class ScorerLabelMaps:
         ).transpose()  # max(1,x) so that an empty matrix is not created
         self.jac = np.copy(self.dsc)
         if self.empty_lm == "neither":
-            args = [[self.gt_cc_dusted, self.pred_cc_dusted, *a] for a in prox_labels]
+            args = [[self.LG.lm_cc, self.LP.lm_cc, *a] for a in prox_labels]
 
             d = multiprocess_multiarg(
                 labels_overlap, args, 16, False, False, progress_bar=True
@@ -440,7 +304,7 @@ class ScorerLabelMaps:
         else:
             radiomics = radiomics_multiprocess(
                 self.img,
-                self.gt_cc_dusted,
+                self.LG.lm_cc,
                 self.labs_gt,
                 self.gt_fn,
                 self.params_fn,
@@ -485,8 +349,17 @@ class ScorerLabelMaps:
         df["g_volume_total"] = self.LG.volume_total
         df["p_volume_total"] = self.LP.volume_total
         # df["case_id"] = df["case_id"].fillna(value=self.case_id)
+        df = self.drop_na_rows(df)
         if self.save_matrices == True:
             self.save_overlap_matrices()
+        return df
+
+    def drop_na_rows(self,df):
+        exc_cols = ['case_id' , 'pred_fn','gt_fn', 'gt_volume_total','pred_volume_total']
+        for i, row in df.iterrows():
+            r2 = row.drop(exc_cols)
+            if all(r2.isna()):
+                df.drop([i],inplace=True)
         return df
 
 
@@ -500,6 +373,7 @@ class ScorerFiles:
         gt_fn: Union[str, Path],
         pred_fn: Union[str, Path],
         img_fn: Union[str, Path] = None,
+        case_id = None,
         params_fn=None,
         ignore_labels_gt=[],
         ignore_labels_pred=[],
@@ -516,7 +390,10 @@ class ScorerFiles:
         if not img_fn:
             assert do_radiomics == False, "To do_radiomics, provide img_fn"
         gt_fn, pred_fn = Path(gt_fn), Path(pred_fn)
-        self.case_id = info_from_filename(gt_fn.name, full_caseid=True)["case_id"]
+        if case_id is None:
+            self.case_id = info_from_filename(gt_fn.name, full_caseid=True)["case_id"]
+        else:
+            self.case_id = case_id
         self.gt, self.pred = [sitk.ReadImage(fn) for fn in [gt_fn, pred_fn]]
         self.img = sitk.ReadImage(img_fn) if img_fn else None
 
@@ -524,14 +401,15 @@ class ScorerFiles:
         self.LP = LabelMapGeometry(self.pred, ignore_labels_pred)
         if not results_folder:
             results_folder = "results"
-        store_attr()
+        store_attr(but='case_id')
 
     def process(self, debug=False):
         print("Processing {}".format(self.case_id))
         self.dust()
         self.gt_radiomics(debug)
-        self.compute_overlap_perlesion()
-        self.make_one_to_one_dsc()
+        if not self.empty_lm == "neither":
+            self.compute_overlap_perlesion()
+            self.make_one_to_one_dsc()
         self.compute_overlap_overall()
         self.cont_tables()
         return self.create_df_full()
@@ -550,9 +428,7 @@ class ScorerFiles:
     def dust(self):
         # predicted labels <threshold max_dia will be erased
         self.LG.dust(self.dusting_threshold)  # sanity check
-        self.gt_cc_dusted = self.LG.lm_cc
         self.LP.dust(self.dusting_threshold)
-        self.pred_cc_dusted = self.LP.lm_cc
 
         self.labs_pred = self.LP.labels
         self.labs_gt = self.LG.labels
@@ -581,17 +457,21 @@ class ScorerFiles:
         ).transpose()  # max(1,x) so that an empty matrix is not created
         self.jac = np.copy(self.dsc)
         if self.empty_lm == "neither":
-            args = [[self.gt_cc_dusted, self.pred_cc_dusted, *a] for a in prox_labels]
 
-            d = multiprocess_multiarg(
-                labels_overlap, args, 16, False, False, progress_bar=True
-            )  # multiprocess i s slow
-
+            d = self._dsc_multilabel(prox_labels)
             # this pairing is a limited number of indices (and corresponding labels) which are in neighbourhoods between LG and LP
             for i, sc in enumerate(d):
                 ind_pair = list(prox_inds[i])
                 self.dsc[ind_pair[0], ind_pair[1]] = sc[0]
                 self.jac[ind_pair[0], ind_pair[1]] = sc[1]
+
+
+    def _dsc_multilabel(self,prox_labels):
+            args = [[self.LG.lm_cc, self.LP.lm_cc, *a] for a in prox_labels]
+            d = multiprocess_multiarg(
+                labels_overlap, args, 32, False, False, progress_bar=True
+            )  # multiprocess i s slow
+            return d
 
     def make_one_to_one_dsc(self):
         dsc_cp = self.dsc.copy()
@@ -613,7 +493,9 @@ class ScorerFiles:
         return self.dsc_single_vals[indpair[0], indpair[1]]
 
     def get_neighbr_labels(self):
-        prox_inds = proximity_indices(self.LG.nbrhoods, self.LP.nbrhoods)
+        bboxes_lg = self.LG.nbrhoods["bbox"]
+        bboxes_lp = self.LP.nbrhoods["bbox"]
+        prox_inds = proximity_indices2(bboxes_lg, bboxes_lp)
         nbr1 = self.LG.nbrhoods.iloc[prox_inds[:, 0]]["label_cc"]
         nbr2 = self.LP.nbrhoods.iloc[prox_inds[:, 1]]["label_cc"]
         prox_labels = list(zip(nbr1, nbr2))
@@ -652,7 +534,7 @@ class ScorerFiles:
         else:
             radiomics = radiomics_multiprocess(
                 self.img,
-                self.gt_cc_dusted,
+                self.LG.lm_cc,
                 self.labs_gt,
                 self.gt_fn,
                 self.params_fn,
@@ -660,36 +542,52 @@ class ScorerFiles:
             )
         self.radiomics = pd.DataFrame(radiomics)
 
+
+    def insert_fks(self,df,dummy_fk, inds,fks):
+        df["fk"]=dummy_fk
+        repeat_rows=[]
+        for ind,fk in zip(inds,fks):
+            existing_fk = df.loc[ind, "fk"]
+            if existing_fk != dummy_fk:
+                row = df.loc[ind].copy()
+                row["fk"]= fk
+                repeat_rows.append(row)
+            else:
+                df.loc[ind, "fk"] = fk
+            # S.LP.nbrhoods.loc[ind_pred, "fk"] = fk
+
+        df = pd.concat([df, pd.DataFrame(repeat_rows)])
+        return df
+
     def create_df_full(self):
 
         pos_inds = np.argwhere(self.dsc_single_vals)
-        fk = list(np.arange(pos_inds.shape[0]))
+        fks = list(np.arange(pos_inds.shape[0]))
         pos_inds_gt = pos_inds[:, 0]
         pos_inds_pred = pos_inds[:, 1]
 
         # gt_all = set(self.LG.nbrhoods.index)
         df_rad = pd.DataFrame(self.radiomics)
-        self.LG.nbrhoods["fk"] = -1  # nan creates a float column
-        self.LG.nbrhoods.loc[pos_inds_gt, "fk"] = fk
-        LG_out = self.LG.nbrhoods.rename(
+        self.LG.nbrhoods = self.insert_fks(self.LG.nbrhoods, -1, pos_inds_gt, fks)
+        self.LP.nbrhoods = self.insert_fks(self.LP.nbrhoods, -2, pos_inds_pred, fks)
+
+        LG_out1 = self.LG.nbrhoods.rename(
             mapper=lambda x: "gt_" + x if x != "fk" else x, axis=1
         )
-        LG_out = df_rad.merge(
-            LG_out, right_on="gt_label_cc", left_on="label", how="outer"
+        LG_out2 = df_rad.merge(
+            LG_out1, right_on="gt_label_cc", left_on="label", how="outer"
         )
 
-        self.LP.nbrhoods["fk"] = -2  # nan creates a float column
-        self.LP.nbrhoods.loc[pos_inds_pred, "fk"] = fk
         LP_out = self.LP.nbrhoods.rename(
             mapper=lambda x: "pred_" + x if x != "fk" else x, axis=1
         )
 
-        dscs = pd.DataFrame([[0, ff] for ff in fk], columns=["dsc", "fk"])
+        dscs = pd.DataFrame([[0, ff] for ff in fks], columns=["dsc", "fk"])
         try:
             dscs["dsc"] = np.apply_along_axis(self.get_vals_from_indpair, 1, pos_inds)
         except:
             pass
-        dfs_all = LG_out, LP_out, dscs
+        dfs_all = LG_out2, LP_out, dscs
         df = reduce(lambda rt, lt: pd.merge(rt, lt, on="fk", how="outer"), dfs_all)
         df["pred_fn"] = self.pred_fn
         df["gt_fn"] = self.gt_fn
@@ -700,55 +598,31 @@ class ScorerFiles:
         df["gt_volume_total"] = self.LG.volume_total
         df["pred_volume_total"] = self.LP.volume_total
         df["case_id"] = df["case_id"].fillna(value=self.case_id)
+
+        df = self.cleanup(df)
         if self.save_matrices == True:
             self.save_overlap_matrices()
         return df
 
-        #
-        # # prox_labels, prox_inds = self.get_neighbr_labels()
-        # pos_inds = np.argwhere(self.dsc_single_vals)
-        # pos_inds_gt = pos_inds[:, 0]
-        # pos_inds_pred = pos_inds[:, 1]
-        #
-        # gt_all = set(self.LG.nbrhoods.index)
-        # gt_left_over = gt_all.difference(set(pos_inds_gt))
-        # gt_inds = list(pos_inds_gt) + list(gt_left_over)
-        # lg_short = self.LG.nbrhoods[["label", "label_cc", "length", "volume"]].iloc[
-        #     gt_inds
-        # ]
-        # lg_short.reset_index(drop=True, inplace=True)
-        # lg_short.rename(mapper=lambda x: "gt_" + x, axis=1, inplace=True)
-        # lp_short = self.LP.nbrhoods[["label", "label_cc", "length", "volume"]].iloc[
-        #     pos_inds_pred
-        # ]
-        # lp_short.reset_index(drop=True, inplace=True)
-        # lp_short = append_empty_rows(lp_short, len(gt_left_over))
-        # lp_short.rename(mapper=lambda x: "pred_" + x, axis=1, inplace=True)
-        #
-        # df_rad = pd.DataFrame(self.radiomics)
-        # df = pd.concat([df_rad, lg_short, lp_short], axis=1)
-        #
-        # try:
-        #     dscs = np.apply_along_axis(self.get_vals_from_indpair, 1, pos_inds)
-        #     dscs = np.append(dscs, [0] * len(gt_left_over))
-        #     df["dsc"] = dscs
-        # except:
-        #     df["dsc"] = 0.0
-        # df["pred_fn"] = self.pred_fn
-        # df["fp_pred_labels"] = [
-        #     self.fp_pred_labels,
-        # ] * np.maximum(1, len(self.LG))
-        #
-        # df["dsc_overall"], df["jac_overall"] = (
-        #     self.dsc_overall,
-        #     self.jac_overall,
-        # )
-        # df['gt_volume_total'] = self.LG.volume_total
-        # df['pred_volume_total'] = self.LP.volume_total
-        # if self.save_matrices == True:
-        #     self.save_overlap_matrices()
-        # return df
-        #
+    def cleanup(self,df):
+        if self.LP.is_empty() == True:  # -2 fk is used to count false positives by R. 
+            locs = df.fk!=-2
+            df = df.loc[locs]
+        df = self.drop_na_rows(df)
+        return df
+
+    def drop_na_rows(self,df):
+        exc_cols = ['case_id' , 'pred_fn','gt_fn', 'gt_volume_total','pred_volume_total']
+        rel_cols = df.columns.intersection(exc_cols)
+        drop_inds = []
+        for i, row in df.iterrows():
+            r2 = row.drop(exc_cols)
+            if all(r2.isna()):
+                drop_inds.append(i)
+        drops = df.index.isin(drop_inds)
+        df  = df[~drops]
+        return df
+
 
     def save_overlap_matrices(self):
         dsc_labels = self.colnames_gen("dsc")
@@ -773,6 +647,178 @@ class ScorerFiles:
     def results_folder(self, value):
         self._results_folder = Path(value)
         maybe_makedirs(self._results_folder)
+
+
+class ScorerAdvanced(ScorerFiles):
+    def corresponding_gt_inds(self,pred_inds):
+            gt_dsc_gps = []
+            for ind in pred_inds:
+                if hasattr(ind,'item'):
+                    ind= ind.item()
+                gp = np.nonzero(self.dsc[:,ind])
+                gp = set(gp[0])
+                gt_dsc_gps.append(gp)
+            return gt_dsc_gps
+
+
+
+    def recompute_overlap_perlesion(self):
+        #will merge lesions which touch as per LITS article
+        m_labs_matched = np.count_nonzero(self.dsc, 0)
+        pred_inds_single = np.argwhere(m_labs_matched == 1).flatten().tolist()
+        pred_inds_multi = np.argwhere(m_labs_matched > 1)
+        pred_inds_multi = pred_inds_multi.flatten().tolist()
+
+        gt_inds_single = self.corresponding_gt_inds(pred_inds_single)
+        gt_inds_single = [list(a)[0] for a in gt_inds_single]
+        self.dsc_single = self.dsc[gt_inds_single,pred_inds_single].tolist()
+
+        gt_inds_multi = self.corresponding_gt_inds(pred_inds_multi)
+        inds = np.tril_indices(len(gt_inds_multi),-1)
+        keep_inds=[True]*len(gt_inds_multi)
+        gt_supersets = []
+        for x,y in zip(*inds):
+            set1 = gt_inds_multi[x]
+            set2  = gt_inds_multi[y]
+            if len(set1.intersection(set2))>0:
+                    keep_inds[x]=False
+                    keep_inds[y]=False
+                    gt_supersets.append(set1.union(set2))
+        gt_inds_multi = list(il.compress(gt_inds_multi,keep_inds))  + gt_supersets
+        pred_inds_multi = []
+        for gt_gp in gt_inds_multi:
+            pred_gp=[]
+            for gt_ind in gt_gp:
+            # gt_ind = list(gt_gp)[x]
+                pred_inds = np.argwhere(self.dsc[gt_ind,:]>0)
+                pred_gp.extend(pred_inds.flatten().tolist())
+            pred_gp = set(pred_gp)
+            pred_inds_multi.append(pred_gp)
+
+        self.gt_labs_121 = inds_to_labels(gt_inds_single)
+        pred_labs_single = inds_to_labels(pred_inds_single)
+
+        self.pred_inds_all_matched  = pred_inds_single+pred_inds_multi
+        pred_remaps, pred_labs_multi = self.dsc_gp_remapping(pred_inds_multi)
+        self.pred_labs_all_matched  = pred_labs_single+pred_labs_multi
+        self.pred_labs_unmatched = set(self.LP.labels).difference(set(self.pred_labs_all_matched))
+
+        gt_remaps, self.gt_labs_m2m = self.dsc_gp_remapping(gt_inds_multi)
+        self.gt_labs_all_matched = self.gt_labs_121+self.gt_labs_m2m
+        self.gt_inds_all_matched = gt_inds_single+gt_inds_multi
+        self.gt_labs_unmatched = set(self.LG.labels).difference(set(self.gt_labs_all_matched))
+
+        self.LG.relabel(gt_remaps)
+        self.LP.relabel(pred_remaps)
+
+        prox_labels= list(zip(self.gt_labs_m2m,pred_labs_multi))
+        dsc_jac_multi = self._dsc_multilabel(prox_labels)
+        self.dsc_multi = [a[0] for a in dsc_jac_multi]
+
+
+
+    def dsc_gp_remapping(self,dsc_gps):
+        remapping = {}
+        dest_labels=[]
+        for gp in dsc_gps:
+            gp = inds_to_labels(gp)
+            main_lab = gp[0]
+            dest_labels.append(main_lab)
+            maps = {lab:int(main_lab) for lab in gp}
+            remapping.update(maps)
+        return remapping,dest_labels
+
+    def insert_fks(self, df,dummy_fk,fks,dsc_gp_inds,dsc_gp_labels,dsc_labels_unmatched):
+        colnames = ['label', 'cent','length','volume','label_cc', 'fk']
+        df_neo =pd.DataFrame(columns=colnames)
+        df['fk'] = dummy_fk
+        df['label_cc_relabelled']=df['label_cc']
+        for ind,fk in enumerate(fks):
+            dsc_gp = dsc_gp_inds[ind]
+            label = dsc_gp_labels[ind]
+            if isinstance(dsc_gp,set):
+                dsc_gp = list(dsc_gp)
+                row= df.loc[dsc_gp]
+            # if len(row)>1:
+                label_dom = row['label'].max()
+                cent = row['cent'].tolist()[0]
+                length = row['length'].sum()
+                volume = row['volume'].sum()
+                df_dict = {'label':label_dom, 'cent':cent,'length':length, 'volume':volume,'label_cc':label,'fk':fk}
+                # df_dict = pd.DataFrame(df_dict)
+            else:
+                row= df.loc[dsc_gp]
+                df_dict = row[colnames].copy()
+                df_dict['fk']= fk
+                df_dict['label_cc']=label
+            df_neo.loc[len(df_neo)]= df_dict
+
+        for label_cc in dsc_labels_unmatched:
+            row  = df.loc[df['label_cc']== label_cc ]
+            df_dict = row[colnames].copy()
+            # df_neo.loc[len(df_neo)]= df_dict
+            df_neo = pd.concat([df_neo,df_dict],axis = 0,ignore_index=True)
+        return df_neo
+
+
+    def insert_dsc_fks(self):
+        self.LG.nbrhoods['dsc']=float('nan')
+        if not self.empty_lm == "neither":
+            self.LG.nbrhoods['fk']=-1
+            self.LP.nbrhoods['fk']=-2
+        else:
+            fks = np.arange(len(self.gt_labs_all_matched))
+            self.LG.nbrhoods = self.insert_fks(self.LG.nbrhoods, -1, fks,self.gt_inds_all_matched,self.gt_labs_all_matched,self.gt_labs_unmatched)
+            self.LP.nbrhoods = self.insert_fks(self.LP.nbrhoods, -2, fks,self.pred_inds_all_matched,self.pred_labs_all_matched,self.pred_labs_unmatched)
+            self.LG.nbrhoods.loc[self.LG.nbrhoods['label_cc'].isin(self.gt_labs_m2m),'dsc'] = self.dsc_multi
+            self.LG.nbrhoods.loc[self.LG.nbrhoods['label_cc'].isin(self.gt_labs_121),'dsc'] = self.dsc_single
+
+
+    def create_df_full(self):
+
+        df_rad = pd.DataFrame(self.radiomics)
+
+        LG_out1 = self.LG.nbrhoods.rename(
+            mapper=lambda x: "gt_" + x if not x  in ["fk","dsc"] else x, axis=1
+        )
+        LG_out2 = df_rad.merge(
+            LG_out1, right_on="gt_label_cc", left_on="label", how="outer"
+        )
+
+        LP_out = self.LP.nbrhoods.rename(
+            mapper=lambda x: "pred_" + x if x != "fk" else x, axis=1
+        )
+
+        dfs_all = LG_out2, LP_out
+        df = reduce(lambda rt, lt: pd.merge(rt, lt, on="fk", how="outer"), dfs_all)
+
+        df["pred_fn"] = self.pred_fn
+        df["gt_fn"] = self.gt_fn
+        df["dsc_overall"], df["jac_overall"] = (
+            self.dsc_overall,
+            self.jac_overall,
+        )
+        df["gt_volume_total"] = self.LG.volume_total
+        df["pred_volume_total"] = self.LP.volume_total
+        df["case_id"] = df["case_id"].fillna(value=self.case_id)
+
+        df = self.cleanup(df)
+
+        return df
+
+
+    def process(self, debug=False):
+        print("Processing {}".format(self.case_id))
+        self.dust()
+        self.gt_radiomics(debug)
+        self.compute_overlap_overall()
+        if self.empty_lm == "neither":
+            self.compute_overlap_perlesion()
+            self.recompute_overlap_perlesion()
+        self.insert_dsc_fks()
+        return self.create_df_full()
+
+
 
 
 class BatchScorer:
@@ -802,31 +848,37 @@ class BatchScorer:
         self.file_dicts = self.match_filenames(gt_fns)
 
     def process(self):
-        dfs = []
+        self.dfs = []
         for fn_dict in self.file_dicts:
             gt_fn, pred_fn, img_fn = fn_dict.values()
             print("processing {}".format(gt_fn))
-            S = ScorerFiles(
+            S = ScorerAdvanced(
                 gt_fn=gt_fn,
                 img_fn=img_fn,
                 pred_fn=pred_fn,
                 ignore_labels_gt=self.ignore_labels_gt,
                 ignore_labels_pred=self.ignore_labels_pred,
+                case_id=None,
                 save_matrices=False,
                 do_radiomics=self.do_radiomics,
                 dusting_threshold=self.dusting_threshold,
 
             )
             df = S.process(debug=self.debug)
-            dfs.append(df)
-        df_final = self.finalise_df(dfs)
+            self.dfs.append(df)
+            self.store_tmp_df()
+        df_final = self.finalise_df(self.dfs)
         # self.df = pd.concat(dfs, axis=0)
         print("Saving results to {}".format(self.output_fn))
         df_final.to_excel(self.output_fn, index=False)
 
+    def store_tmp_df(self):
+        dfs_tmp = pd.concat(self.dfs)
+        dfs_tmp.to_csv(self.output_fldr / "tmp.csv")
+
     def finalise_df(self, dfs):
         if self.partial_df is not None:
-            dfs += self.partial_df
+            dfs += [self.partial_df]
         df_final = pd.concat(dfs, axis=0)
         return df_final
 
@@ -838,7 +890,7 @@ class BatchScorer:
             img_fns = None
         file_dicts = []
         for gt_fn in gt_fns:
-            case_id = info_from_filename(gt_fn.name)["case_id"]
+            case_id = info_from_filename(gt_fn.name,full_caseid=True)["case_id"]
             pred_fn = [fn for fn in pred_fns if case_id in fn.name]
             if len(pred_fn) != 1:
                 tr()
@@ -858,18 +910,21 @@ class BatchScorer:
         return file_dicts
 
     def filter_gt_fns(self, gt_fns, partial_df, exclude_fns):
+        print("Total gt files: {}".format(len(gt_fns)))
+        print("Excluded files: {}".format(len(exclude_fns)))
         exclude_fns = []
         cid_done = []
         if partial_df is not None:
             cid_done = list(partial_df["case_id"].unique())
         if len(exclude_fns) > 0:
-            cid_done.append([info_from_filename(fn)["case_id"] for fn in exclude_fns])
+            cid_done.append([info_from_filename(fn,True)["case_id"] for fn in exclude_fns])
 
         fns_pending = [
             fn
             for fn in gt_fns
-            if info_from_filename(fn.name)["case_id"] not in cid_done
+            if info_from_filename(fn.name,True)["case_id"] not in cid_done
         ]
+        print("After filtering already processed files, files remaining: {}".format(len(fns_pending)))
 
         return fns_pending
 
@@ -883,28 +938,23 @@ class BatchScorer:
         )
         output_fn = self.output_fldr / output_fn
         return output_fn
-
-
 # %%
 if __name__ == "__main__":
     preds_fldr = Path(
-        "/s/fran_storage/predictions/litsmc/LITS-787_LITS-810_LITS-811_fixed_mc"
+        "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc"
     )
-    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-935_fixed_mc")
-
-# %%
-    gt_fldr = Path("/s/xnat_shadow/crc/wxh/lms_manual_final")
+    gt_fldr = Path("/s/xnat_shadow/crc/lms_manual_final")
     gt_fns = list(gt_fldr.glob("*"))
     gt_fns = [fn for fn in gt_fns if is_sitk_file(fn)]
 
     imgs_fldr = Path("/s/xnat_shadow/crc/completed/images")
 
-    results_df = pd.read_excel(
-        "/s/fran_storage/predictions/litsmc/LITS-787_LITS-810_LITS-811_fixed_mc/results/results_thresh3mm_results.xlsx",
-        index_col=None,
+    results_df = pd.read_csv(
+        "/home/ub/code/label_analysis/results/tmp.csv",
     )
 
-    results_df["case_id"] = results_df["pred_fn"].apply(
+
+    results_df["case444"] = results_df["pred_fn"].apply(
         lambda x: info_from_filename(Path(x).name)["case_id"]
     )
 
@@ -915,32 +965,31 @@ if __name__ == "__main__":
     cids = [info_from_filename(fn.name)["case_id"] for fn in files_pending]
 
     done = ~results_df["case_id"].isin(cids)
-    partial_df = results_df.loc[done]
+    # partial_df = results_df.loc[done]
+    partial_df = results_df
+    partial_df = None
     # cid_done = set(partial_df['case_id'].values)
     # fns_pending = [fn for fn in gt_fns if info_from_filename(fn.name)['case_id'] not in cid_done]
 
 # %%
-    t6_fldr = Path("/s/datasets_bkp/Task06Lung/masks")
-    imgs_t6 = list(t6_fldr.glob("*"))
-    # imgs_t6 = imgs_t6[:20]
-    gt_fns = imgs_t6
-    preds_fldr = Path("/s/fran_storage/predictions/lidc2/LITS-913_fixed_mc")
-
-# %%
 
     do_radiomics = False
+    threshold = 0
 
 # %%
-    partial_df = None
+    # partial_df = None
     B = BatchScorer(
+
         gt_fns,
         preds_fldr=preds_fldr,
-        ignore_labels_gt=[1],
+        ignore_labels_gt=[],
         ignore_labels_pred=[1],
         imgs_fldr=None,
         partial_df=partial_df,
         debug=False,
         do_radiomics=False,
+        dusting_threshold=threshold,
+        output_fldr=Path("/home/ub/code/label_analysis/results"),
     )  # ,output_fldr=Path("/s/fran_storage/predictions/litsmc/LITS-787_mod/results"))
 # %%
     B.process()
@@ -948,15 +997,208 @@ if __name__ == "__main__":
     df = pd.read_csv(B.output_fn)
     excluded = list(pd.unique(df["gt_fn"].dropna()))
 # %%
-    case_subid = "028"
+    case_subid = "CRC211"
     gt_fn = find_file(case_subid, gt_fns)
     pred_fn = find_file(case_subid, preds_fldr)
+    # gt_fn = gt_fns[0]
+    # pred_fn = find_file(gt_fn.name,preds_fldr)
+
 # %%
 
     ignore_labels_gt = []
-    ignore_labels_pred = []
+    ignore_labels_pred = [1]
     do_radiomics = False
 # %%
     gt, pred = [sitk.ReadImage(fn) for fn in [gt_fn, pred_fn]]
+    exclude_fns = []
+    cid_done = []
+    if partial_df is not None:
+        cid_done = list(partial_df["case_id"].unique())
+    if len(exclude_fns) > 0:
+        cid_done.append([info_from_filename(fn)["case_id"] for fn in exclude_fns])
+
+    fns_pending = [
+        fn
+        for fn in gt_fns
+        if info_from_filename(fn.name)["case_id"] not in cid_done
+    ]
+# %%
+
+# %%
+
+# %%
+    gt_fn = "testfiles/gt.nrrd"
+    pred_fn = "testfiles/pred.nrrd"
+    S = ScorerAdvanced(gt_fn,pred_fn,case_id ="abc",dusting_threshold=0)
+    S.process()
+# %%
+    debug=False
+    S.dust()
+    sitk.WriteImage(S.LG.lm_cc,"testfiles/gt_cc.nii.gz")
+    sitk.WriteImage(S.LP.lm_cc,"testfiles/pred_cc.nii.gz")
+    S.gt_radiomics(debug)
+    S.compute_overlap_overall()
+    if S.empty_lm == "neither":
+        S.compute_overlap_perlesion()
+        # S.recompute_overlap_perlesion()
+# %%
+
+    np.save("testfiles/dsc_test.npy",S.dsc)
+# %%
+
+    # gt_fn= "/home/ub/code/label_analysis/testfiles/gt.nrrd"
+    # pred_fn = "/home/ub/code/label_analysis/testfiles/pred.nrrd"
+    # S = ScorerAdvanced(gt_fn,pred_fn, dusting_threshold=0, ignore_labels_gt=[],ignore_labels_pred=[1])
+    # df = S.process()
+
+# %%
+# %%
+    # S.process()
+# %%
+    debug=False
+    print("Processing {}".format(S.case_id))
+
+    S.dust()
+    S.gt_radiomics(debug)
+    S.compute_overlap_perlesion()
+    S.compute_overlap_overall()
+# %%
+    lm= sitk.ReadImage(gt_fn)
+    LG = LabelMapGeometry(lm)
+    LG.nbrhoods
+# %%
+    df = S.LG.nbrhoods.copy()
+    len(S.gt_labs_121)
+
+# %%
+    fks = np.arange(len(S.gt_labs_all_matched))
+
+    d2 = S.insert_fks(S.LG.nbrhoods, -1, fks,S.gt_inds_all_matched,S.gt_labs_all_matched,S.gt_labs_unmatched)
+# %%
+    S.LG.nbrhoods['label_cc']==1
+    S.gt_labs_m2m
+    sum(S.LG.nbrhoods['label_cc'].isin(S.gt_labs_121))
+# %%
+    dummy_fk = -1
+# %%
+    df = LG.nbrhoods.copy()
+    dsc_gp_inds = S.gt_inds_all_matched
+    dsc_gp_labels = S.gt_labs_all_matched
+    dsc_labels_unmatched = S.gt_labs_unmatched
+
+# %%
+    #will merge lesions which touch as per LITS article
+# %%
+    sitk.WriteImage(S.LG.lm_cc,"testfiles/gt_cc.nii.gz")
+    sitk.WriteImage(S.LP.lm_cc,"testfiles/pred_cc.nii.gz")
+
+# %%
+# %%
+    row_counts = np.count_nonzero(S.dsc, 1)
+    col_counts = np.count_nonzero(S.dsc, 0)
+
+    
+    pred_inds_m21=np.argwhere(col_counts>1).flatten().tolist()
+    gt_inds_12m = np.argwhere(row_counts>1).flatten().tolist()
+    col_counts = np.count_nonzero(S.dsc, 0)
+    pred_inds_x21 = np.argwhere(col_counts == 1).flatten().tolist()
+
+    ind = 1
+    pred_ind = pred_inds_x21[ind]
+    row_ind = np.argwhere(S.dsc[:,pred_ind]>0)
+    np.count_nonzero(S.dsc[row_ind,:])
+# %%
+
+    # gt_inds_121 = [list(a)[0] for a in gt_inds_121]
+    S.dsc_single = S.dsc[gt_inds_121,pred_inds_x21].tolist()
+# %%
+    #will merge lesions which touch as per LITS article
+    col_counts = np.count_nonzero(S.dsc, 0)
+    pred_inds_single = np.argwhere(col_counts == 1).flatten().tolist()
+    pred_inds_m21 = np.argwhere(col_counts > 1)
+    pred_inds_m21 = pred_inds_m21.flatten().tolist()
+
+    gt_inds_single = S.corresponding_gt_inds(pred_inds_single)
+    gt_inds_single = [list(a)[0] for a in gt_inds_single]
+    S.dsc_single = S.dsc[gt_inds_single,pred_inds_single].tolist()
+
+    gt_inds_m21 = S.corresponding_gt_inds(pred_inds_m21)
+    inds = np.tril_indices(len(gt_inds_m21),-1)
+    keep_inds=[True]*len(gt_inds_m21)
+    gt_supersets = []
+    for x,y in zip(*inds):
+        set1 = gt_inds_m21[x]
+        set2  = gt_inds_m21[y]
+        if len(set1.intersection(set2))>0:
+                keep_inds[x]=False
+                keep_inds[y]=False
+                gt_supersets.append(set1.union(set2))
+    gt_inds_m21 = list(il.compress(gt_inds_m21,keep_inds))  + gt_supersets
+# %%
+    pred_inds_m21 = []
+    for gt_gp in gt_inds_m21:
+        pred_gp=[]
+        for gt_ind in gt_gp:
+        # gt_ind = list(gt_gp)[x]
+            pred_inds = np.argwhere(S.dsc[gt_ind,:]>0)
+            pred_gp.extend(pred_inds.flatten().tolist())
+        pred_gp = set(pred_gp)
+        pred_inds_m21.append(pred_gp)
+
+# %%
+    S.gt_labs_121 = inds_to_labels(gt_inds_single)
+    pred_labs_single = inds_to_labels(pred_inds_single)
+
+    S.pred_inds_all_matched  = pred_inds_single+pred_inds_m21
+    pred_remaps, pred_labs_m2m = S.dsc_gp_remapping(pred_inds_m21)
+    S.pred_labs_all_matched  = pred_labs_single+pred_labs_m2m
+    S.pred_labs_unmatched = set(S.LP.labels).difference(set(S.pred_labs_all_matched))
+
+    gt_remaps, S.gt_labs_m2m = S.dsc_gp_remapping(gt_inds_m21)
+    S.gt_labs_all_matched = S.gt_labs_121+S.gt_labs_m2m
+    S.gt_inds_all_matched = gt_inds_single+gt_inds_m21
+    S.gt_labs_unmatched = set(S.LG.labels).difference(set(S.gt_labs_all_matched))
+
+    S.LG.relabel(gt_remaps)
+    S.LP.relabel(pred_remaps)
+
+    prox_labels= list(zip(S.gt_labs_m2m,pred_labs_m2m))
+    dsc_jac_multi = S._dsc_multilabel(prox_labels)
+    S.dsc_multi = [a[0] for a in dsc_jac_multi]
+
+
+
+
+
+# %%
+    colnames = ['label', 'cent','length','volume','label_cc', 'fk']
+    df_neo =pd.DataFrame(columns=colnames)
+    df['fk'] = dummy_fk
+    df['label_cc_relabelled']=df['label_cc']
+    for ind,fk in enumerate(fks):
+        dsc_gp = dsc_gp_inds[ind]
+        label = dsc_gp_labels[ind]
+        if isinstance(dsc_gp,set):
+            dsc_gp = list(dsc_gp)
+            row= df.loc[dsc_gp]
+        # if len(row)>1:
+            label_dom = row['label'].max()
+            cent = row['cent'].tolist()[0]
+            length = row['length'].sum()
+            volume = row['volume'].sum()
+            df_dict = {'label':label_dom, 'cent':cent,'length':length, 'volume':volume,'label_cc':label,'fk':fk}
+            # df_dict = pd.DataFrame(df_dict)
+        else:
+            row= df.loc[dsc_gp]
+            df_dict = row[colnames].copy()
+            df_dict['fk']= fk
+            df_dict['label_cc']=label
+        df_neo.loc[len(df_neo)]= df_dict
+
+    for label_cc in dsc_labels_unmatched:
+        row  = df.loc[df['label_cc']== label_cc ]
+        df_dict = row[colnames].copy()
+        # df_neo.loc[len(df_neo)]= df_dict
+        df_neo = pd.concat([df_neo,df_dict],axis = 0,ignore_index=True)
 
 # %%

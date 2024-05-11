@@ -9,6 +9,68 @@ from fran.utils.imageviewers import view_sitk
 
 tr = ipdb.set_trace
 
+def inds_to_labels(inds:list):
+    inds = list(inds)
+    # adds 1 to each 
+    labels  = [x+1 for x in inds]
+    return labels
+
+
+
+def np_to_native(number):
+    if hasattr(number,"dtype"):
+        number = number.item()
+    return number
+
+def np_to_native_dict(remapping):
+    remapping_out = {}
+    for k,v in remapping.items():
+        k = np_to_native(k)
+        v = np_to_native(v)
+        remapping_out[k] = v
+    return remapping_out
+
+
+
+def bb_limits(bb):
+    bb_start = bb[:3]
+    bb_end = [st+en for st,en in zip(bb_start,bb[3:])]
+    return bb_start,bb_end
+
+
+def bb1_inside_bb2(bb1,bb2):
+    theta = lambda x,y,z: (z-y)/(x-y)
+    bb1_start,bb1_end = bb_limits(bb1)
+    bb2_start,bb2_end = bb_limits(bb2)
+    thetas_bb1_start= [theta(x,y,z) for x,y,z in zip(bb2_start,bb2_end,bb1_start)]
+    thetas_bb1_end= [theta(x,y,z) for x,y,z in zip(bb2_start,bb2_end,bb1_end)]
+    thetas = np.array([thetas_bb1_start,thetas_bb1_end])
+    is_inside = np.all((thetas >=0) & (thetas <=1))
+    return is_inside
+
+
+
+def bb1_intersects_bb2(bb1,bb2):
+    
+    bb1_start,bb1_end = bb_limits(bb1)
+    bb2_start,bb2_end = bb_limits(bb2)
+    ints =[]
+    for ind in range(3):
+        bb1x = np.arange(bb1_start[ind],bb1_end[ind])
+        bb2x = np.arange(bb2_start[ind],bb2_end[ind])
+        intersec =     len(np.intersect1d(bb1x,bb2x))>0
+        ints.append(intersec)
+    return all(ints)
+
+def remap_single_label(lm, target_label, starting_ind):
+    target_label = np_to_native(target_label)
+    lm_tmp = single_label(lm, target_label)
+    lm_tmp = to_cc(lm_tmp)
+    labs = get_labels(lm_tmp)
+    remapping = {l: l + starting_ind for l in labs}
+    lm_tmp = relabel(lm_tmp, remapping)
+    lm_tmp = to_label(lm_tmp)
+    return lm_tmp, list(remapping.values())
 
 def astype(id: int, inds):  # assumes arg 0 is an image
     ids = listify(id)
@@ -92,9 +154,9 @@ def relabel(lm,remapping):
 
 
 
-
 @astype(22, 0)
 def single_label(mask, target_label):
+    target_label = np_to_native(target_label)
     labs_all = get_labels(mask)
     if len(labs_all) > 1:
         non_active = [l for l in labs_all if l != target_label]
