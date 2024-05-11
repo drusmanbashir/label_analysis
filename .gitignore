@@ -6,6 +6,7 @@ results
 __pycache__/
 *.py[cod]
 *.csv
+*.nrrd
 *.np
 *.pt
 *.nii.*
