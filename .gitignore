@@ -12,3 +12,5 @@ __pycache__/
 *.npz
 *.pt
 *.nii.*
+*.stl
+*.obj
