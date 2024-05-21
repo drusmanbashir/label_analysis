@@ -1,5 +1,7 @@
 
 # %%
+
+from typing import Union
 import SimpleITK as sitk
 from fastcore.basics import listify
 import ipdb
@@ -9,11 +11,50 @@ from fran.utils.imageviewers import view_sitk
 
 tr = ipdb.set_trace
 
+def arrayFromVTKMatrix(vmatrix):
+  """Return vtkMatrix4x4 or vtkMatrix3x3 elements as numpy array.
+  The returned array is just a copy and so any modification in the array will not affect the input matrix.
+  To set VTK matrix from a numpy array, use :py:meth:`vtkMatrixFromArray` or
+  :py:meth:`updateVTKMatrixFromArray`.
+  """
+  from vtk import vtkMatrix4x4
+  from vtk import vtkMatrix3x3
+  import numpy as np
+  if isinstance(vmatrix, vtkMatrix4x4):
+    matrixSize = 4
+  elif isinstance(vmatrix, vtkMatrix3x3):
+    matrixSize = 3
+  else:
+    raise RuntimeError("Input must be vtk.vtkMatrix3x3 or vtk.vtkMatrix4x4")
+  narray = np.eye(matrixSize)
+  vmatrix.DeepCopy(narray.ravel(), vmatrix)
+  return narray
 def inds_to_labels(inds:list):
     inds = list(inds)
     # adds 1 to each 
     labels  = [x+1 for x in inds]
     return labels
+
+
+def get_lm_boundingbox( lm):
+        lsf = sitk.LabelShapeStatisticsImageFilter()
+        lsf.Execute(lm)
+        lm_bb = lsf.GetBoundingBox(1)
+        bb_orig = lm_bb[:3]
+        bb_sz = lm_bb[3:]
+        return bb_orig, bb_sz
+
+def crop_center( lm, im=None):
+        lm = sitk.Cast(lm,sitk.sitkUInt8)
+        orig, sz = get_lm_boundingbox(lm)  # self.lsf.Execute(lm)
+        lm = sitk.RegionOfInterest(lm, sz, orig)
+        lm.SetOrigin([0, 0, 0])
+        if im:
+            im = sitk.RegionOfInterest(im, sz, orig)
+            im.SetOrigin([0, 0, 0])
+            return lm, im
+        else:
+            return lm
 
 
 
@@ -140,7 +181,7 @@ def remove_labels(lm, labels):
 
 
 
-def relabel(lm,remapping):
+def relabel(lm,remapping:dict):
         org_type = lm.GetPixelID()
         lm_cc= to_label(lm)
         lm_cc = sitk.ChangeLabelLabelMap(lm_cc,remapping)
@@ -151,6 +192,13 @@ def relabel(lm,remapping):
             lm_cc = to_int(lm_cc)
             print("Could not recast to original pixel type {0}. Returned img is of type {1}".format(org_type, lm_cc.GetPixelID()))
         return lm_cc
+
+def to_binary(lm):
+    fil = sitk.LabelMapToBinaryImageFilter()
+    lm = to_label(lm)
+    lm = fil.Execute(lm)
+    return lm
+
 
 
 
@@ -168,13 +216,13 @@ def single_label(mask, target_label):
     single_label = sitk.ChangeLabelLabelMap(mask, dici)
     return single_label
 
-#
-# def single_label2(mask, target_label):
-#     mask_np = sitk.GetArrayFromImage(mask)
-#     mask_np[mask_np != target_label] = 0
-#     mask_np[mask_np == target_label] = 1
-#     mask = sitk.GetImageFromArray(mask_np)
-#     return mask
+def single_label_np(lm, target_label):
+    # uses numpy
+    lm_np = sitk.GetArrayFromImage(lm)
+    lm_np[lm_np != target_label] = 0
+    lm_np[lm_np == target_label] = 1
+    lm = sitk.GetImageFromArray(lm_np)
+    return lm
 
 
 @astype(1, 0)

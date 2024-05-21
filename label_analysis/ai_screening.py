@@ -5,7 +5,8 @@ from batchgenerators.utilities.file_and_folder_operations import maybe_mkdir_p
 import shutil
 from label_analysis.merge import MergeLabelMaps
 
-from label_analysis.overlap import BatchScorer, LabelMapGeometry, Scorer
+from label_analysis.overlap import BatchScorer
+from label_analysis.registration import RegisterBSpline
 from label_analysis.remap import RemapFromMarkup
 
 
@@ -31,8 +32,56 @@ from fran.utils.string import (find_file, info_from_filename, match_filenames,
 np.set_printoptions(linewidth=250)
 np.set_printoptions(formatter={"float": lambda x: "{0:0.2f}".format(x)})
 
+
+class RegisterMultiFiles(RegisterBSpline):
+    def __init__(self, f_im, f_lm=None,output_fldr=None) -> None:
+        super().__init__(f_im, f_lm)
+        self.lsf= sitk.LabelShapeStatisticsImageFilter()
+        f_im , f_lm= self.initialize_im_lm(f_im, f_lm) #sitk.ReadImage(f_im)
+        store_attr()
+
+    def process(self, f_im, f_lm):
+        pass
+
+    def save_tfm(self):
+        pass
+        
+
+
 # %%
 if __name__ == "__main__":
+    fn1_im = "/s/xnat_shadow/crc/images/crc_CRC003_20181026_CAP1p5.nii.gz"
+    fn1_lm = "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/crc_CRC003_20181026_CAP1p5.nii.gz"
+    fn2_lm = "/s/fran_storage/predictions/litsmc/LITS-933/crc_CRC162_20150425_ABDOMEN.nii.gz"
+    fn2_im = "/s/xnat_shadow/crc/images/crc_CRC162_20150425_ABDOMEN.nii.gz"
+
+    fn3_im= "/s/xnat_shadow/crc/images/crc_CRC275_20161229_CAP1p51.nii.gz"
+    fn3_lm= "/s/fran_storage/predictions/litsmc/LITS-933/crc_CRC275_20161229_CAP1p51.nii.gz"
+
+    R = RegisterMultiFiles(fn1_im,fn1_lm)
+    R.compute_tfm(fn2_im,fn2_lm)
+    output_fldr= Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/tfms")
+    output_fn = output_fldr/Path(fn2_im).name
+    sitk.WriteImage(R.cmp_transform,output_fn)
+
+    R.m_lm_t2 = R.apply_init(R.m_lm)
+    R.m_lm_t2 = R.apply_full(R.m_lm_t2)
+
+
+    f_s = R.f_im.GetSize()
+    m_s = R.m_lm_t.GetSize()
+    scale=[a/b for a,b in zip(f_s,m_s)]
+
+    st = sitk.ScaleTransform(3, scale)
+
+
+    view_sitk(R.m_lm_t,R.m_lm_t2,data_types=['mask','mask'])
+    view_sitk(R.m_im_t,R.m_lm_t2)
+    view_sitk(R.m_lm_t2,R.m_lm_t2)
+# %%
+# %%
+
+
     df = pd.read_excel("/s/xnat_shadow/crc/dcm_summary_latest.xlsx")
     df = pd.read_excel("/s/xnat_shadow/crc/wxh/wxh_summary.xlsx")
     lesion_masks_folder = Path('/s/xnat_shadow/crc/wxh/masks_manual_todo')

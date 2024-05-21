@@ -93,6 +93,8 @@ class MarkupFromLabelmap():
 
         if outfldr is None:
             outfldr = lm_fn.parent/("markups")
+        else:
+            outfldr = Path(outfldr)
         fn_out = replace_extension(lm_fn.name,"json")
         fn_out = outfldr/fn_out
         return fn_out, outfldr
@@ -147,15 +149,17 @@ class MarkupDetectionOnly(MarkupFromLabelmap):
 # %%
 if __name__ == "__main__":
 
-    M = MarkupDetectionOnly(ignore_labels=[],dusting_threshold=0)
+    M = MarkupDetectionOnly(ignore_labels=[],dusting_threshold=0 )
     # preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-787_mod/")
     preds_fldr = Path("/s/fran_storage/predictions/lidc2/LITS-913_fixed_mc/")
-    lm_fns = list(preds_fldr.glob("*.nii.gz"))
+    gt_fldr = Path("/s/xnat_shadow/crc/lms_manual_final/")
     lm_fns = ["/s/xnat_shadow/crc/lms_manual_final/crc_CRC138_20180812_Abdomen3p0I30f3.nii.gz"]
-    # lm_fn = find_file("CRC084", lm_fns)
+    lm_fns = list(gt_fldr.glob("*.*"))
+    subid = "CRC002"
+    lm_fn = find_file(subid, lm_fns)
     # lm_fn = "/s/fran_storage/predictions/lidc2/LITS-913/lung_038.nii.gz"
     for lm_fn in lm_fns:
-        M.process(lm_fn,overwrite=True)
+        M.process(lm_fn,overwrite=False,outfldr="/s/xnat_shadow/crc/markups")
 # %%
     for lm_fn in lm_fns:
         M.process(lm_fn,overwrite=True)
