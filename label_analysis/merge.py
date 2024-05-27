@@ -5,6 +5,7 @@ import shutil
 from pathlib import Path
 from typing import Union
 
+from fastcore.all import store_true
 import pandas as pd
 import SimpleITK as sitk
 from fastcore.basics import store_attr
@@ -74,55 +75,62 @@ def merge_lmfiles(lm_base, lms_other:Union[sitk.Image,list],labels_lol:list =Non
     return merge(lm_base,lms_other)
 
 
-
 class MergeLabelMaps():
-    def __init__(self,lm_fns:list, labels:list, output_fname:Union[Path,str],remappings:list=None,file_holes:list=None ):
+    def __init__(self,lm_fn1,lm_fn2 , output_fname:Union[Path,str],remapping1=None,remapping2=None):
         '''
         all lms must have non-overlapping labels.
         used when AI generates organ mask stored in fn_label1. User has drawn lesion masks (fn_label2). This algo will merge masks.
 
-        fn_label1 : Provides label 1 (organ).  All others will be erased and holes filled
-        fn_label2: Provides label 2  onwards. 
+        lm_fns list:
+            fn_label1 : Provides label 1 (organ).  #NOTE: All others will be erased and holes filled
+            fn_label2: Provides label 2  onwards. 
+        remapping: list of dicts , one for each of the pair of lm_fns. 
         debug: breakpoint activates if labelmap2 has a label 1.
         '''
-        if all([isinstance(fn,str) or isinstance(fn,Path) for fn in lm_fns]): # isinstance(fn,Path):
-            self.load_images(lm_fns)
+
+        self.lm1 = sitk.ReadImage(str(lm_fn1))
+        self.lm2 = sitk.ReadImage(str(lm_fn2))
+        store_attr('output_fname,remapping1,remapping2')
 
     def process(self):
-        self.fix_lab1()
-        self.fix_lm()
+        self.fix_lm1()
+        self.fix_lm2()
         self.merge()
         self.write_output()
     def load_images(self,lm_fns):
-        self.lab1 = sitk.ReadImage(lm_fns[0])
-        self.lab2 = sitk.ReadImage(lm_fns[1])
-    def fix_lm(self,lm,remapping):
-        lm = relabel(lm,remapping)
-        self.lab2 = to_int(self.lab2)
+        self.lm1 = sitk.ReadImage(str(lm_fns[0]))
+        self.lm2 = sitk.ReadImage(str(lm_fns[1]))
+    def fix_lm1(self):
+        # self.lab1 = to_int(self.lab1)
+        if hasattr(self,"remapping1"):
+        # self.lab1 = sitk.Cast(self.lab1,sitk.sitkLabelUInt16)
+            self.lm1 = relabel(self.lm1,self.remapping1) # merge predicted lesions in to organ so there are no holes left.j
+        self.lm1 = to_int(self.lm1)
+        self.lm1  = sitk.BinaryFillhole(self.lm1)
 
-        self.lab2  = sitk.BinaryFillhole(self.lab2)
+    def fix_lm2(self):
+        if hasattr(self,"remapping2"):
+            self.lm2 = relabel(self.lm2,self.remapping2)
+        self.lm2 = to_int(self.lm2)
+        # self.lm2  = sitk.BinaryFillhole(self.lm2)
 
-    def fix_lab1(self):
-        self.lab1 = to_int(self.lab1)
-        self.lab1 = sitk.Cast(self.lab1,sitk.sitkLabelUInt16)
-        if self.remapping1:
-            self.lab1 = sitk.ChangeLabelLabelMap(self.lab1,{2:1}) # merge predicted lesions in to organ so there are no holes left.j
-        self.lab1 = to_int(self.lab1)
-        self.lab1  = sitk.BinaryFillhole(self.lab1)
+
+
+
     def merge(self):
-        lab1_ar = sitk.GetArrayFromImage(self.lab1)
-        lab2_ar = sitk.GetArrayFromImage(self.lab2)
-        lab2_labels = np.unique(lab2_ar)
-        lab2_labels = np.delete(lab2_labels,0)
-        for label in lab2_labels:
-            lab1_ar[lab2_ar==label]=label
+        lm1_ar = sitk.GetArrayFromImage(self.lm1)
+        lab2_ar = sitk.GetArrayFromImage(self.lm2)
+        lm2_labels = np.unique(lab2_ar)
+        lm2_labels = np.delete(lm2_labels,0)
+        for label in lm2_labels:
+            lm1_ar[lab2_ar==label]=label
 
 
-        self.lab_merged =sitk.GetImageFromArray(lab1_ar)
-        self.lab_merged = align_sitk_imgs(self.lab_merged,self.lab2)
+        self.lm_merged =sitk.GetImageFromArray(lm1_ar)
+        self.lm_merged = align_sitk_imgs(self.lm_merged,self.lm2)
     def write_output(self):
         print("Writing file {}".format(self.output_fname))
-        sitk.WriteImage(self.lab_merged,self.output_fname)
+        sitk.WriteImage(self.lm_merged,str(self.output_fname))
 
 
 def merge_multiprocessor(fn_label1,fn_label2,output_fldr,overwrite=False):
@@ -396,30 +404,39 @@ def merge_multiprocessor(lm_fns,ignore_labels =[],overwrite=False,n_chunks=12):
 # %%
 if __name__ == "__main__":
     # preds_fldr = Path("/s/fran_storage/predictions/lidc2/LITS-913")
-    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-940")
-    lm_fns = list(preds_fldr.glob("*"))
+    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933")
+    gt_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/missed_subcm")
+
+
+
+    pred_fns = list(preds_fldr.glob("*"))
+    pred_fns = [fn for fn in pred_fns if is_sitk_file(fn)]
+
+    gt_fns = list(gt_fldr.glob("*"))
+    gt_fns = [fn for fn in gt_fns if is_sitk_file(fn)]
+    gt_fn = gt_fns[0]
 # %%
-    lg= sitk.ReadImage(fn2)
-    LG = LabelMapGeometry(lg)
+    for gt_fn in gt_fns[1:]:
+        pred_fn = find_matching_fn(gt_fn,pred_fns,use_cid=True)
+
+        MergeLiver = MergeLabelMaps(pred_fn,gt_fn,output_fname=gt_fn,remapping1= {2:1,3:1},remapping2={1:99})
+        MergeLiver.process()
 # %%
-    f2 = sitk.LabelShapeStatisticsImageFilter()
-    f2.ComputeOrientedBoundingBoxOn()
-    f2.Execute(lg)
-    f2.GetBoundingBox(1)
+    view_sitk(MergeLiver.lm1,MergeLiver.lm2, data_types = ['mask','mask'])
 # %%
-    ind = 1
-    lm_f2 = lm_fns[ind*5:(ind+1)*5]
+
+
+    fixed_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc")
+    fixed_fns = list(fixed_fldr.glob("*"))
+    lm_fns = list(preds_fldr.glob("crc*"))
+    pending = [find_matching_fn(fn,fixed_fns) is None for fn in lm_fns]
+    lm_fns_pending = list(il.compress(lm_fns,pending))
 # %%
-# %%
-    M = MergeTouchingLabelsFiles(ignore_labels=[1])
-    lm_fn = [fn for fn in lm_fns if "CRC196" in fn.name][0]
-    lm = sitk.ReadImage(lm_fn)
-    M.process_batch(lm_fn)
-# %%
+
     overwrite=False
-    merge_multiprocessor(lm_fns= lm_fns, overwrite=overwrite,n_chunks= 4, ignore_labels =[1])
+    merge_multiprocessor(lm_fns= lm_fns_pending, overwrite=overwrite,n_chunks= 4, ignore_labels =[1])
 # %%
-    Merger = MergeTouchingLabels(lm,ignore_labels=[1])
+    Merger = MergeTouchingLabels(lm_fns[0],ignore_labels=[1])
     lm_fixed = Merger.process()
     sitk.WriteImage(lm_fixed,lm_fn.str_replace(".nii","_fixed.nii"))
 

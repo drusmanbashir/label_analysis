@@ -37,6 +37,7 @@ class RemapFromDF:
         '''
 
         df: The main columns are : lesion_labels which can be 'benign', 'mets' or 'json' 
+        dataset_fldr: The root folder. Subfolders required: images , lms, markups
         A single 'target_label' will be remappe to a different label based on the provided schema.
 
 
@@ -45,12 +46,13 @@ class RemapFromDF:
         store_attr()
         self.df = self.df.reset_index()  # prevents errors while concat
         if self.schema is None:
-            self.schema = {"benign": 2, "mets": 3}
-        self.out_fldr = dataset_fldr / "masks_multiclass"
-        self.mask_fldr = dataset_fldr / "masks"
+            self.schema = {"normal":2, "benign": 2, "mets": 3} # normal : 2 in case some cases labelled normal have some benign lesions
+        self.out_fldr = dataset_fldr / "lms_mc"
+        self.lms_fldr = dataset_fldr / "lms"
         self.img_fldr = dataset_fldr / "images"
+        assert all([fldr.exists() for fldr in [self.img_fldr, self.lms_fldr]]), "Missing folders (one or both) {0} , {1}".format(self.img_fldr, self.lms_fldr)
         self.img_fns = list(self.img_fldr.glob("*"))
-        self.mask_fns = list(self.mask_fldr.glob("*"))
+        self.lm_fns = list(self.lms_fldr.glob("*"))
         self.markup_fns = list((dataset_fldr / "markups").glob("*"))
 
         additional_columns = []
@@ -72,31 +74,31 @@ class RemapFromDF:
 
     def process_row(self, row, overwrite=False):
         case_id = row.case_id
-        print("Remapping {} to {}".format(row.mask_fn, row.mask_fn_out))
-        if not overwrite and Path(row.mask_fn_out).exists():
-            print("File {} exists. Skipping..".format(row.mask_fn_out))
+        print("Remapping {} to {}".format(row.lm_fn, row.lm_fn_out))
+        if not overwrite and Path(row.lm_fn_out).exists():
+            print("File {} exists. Skipping..".format(row.lm_fn_out))
             return
         if row.lesion_labels == "json":
             R = RemapFromMarkup(organ_label=self.organ_label)
-            R.process(row.mask_fn, row.mask_fn_out, row.markup_fn)
+            R.process(row.lm_fn, row.lm_fn_out, row.markup_fn)
         elif row.lesion_labels == "normal":
             print("No lesions as per df. Will copy as such to dest folder")
-            shutil.copy(row.mask_fn, row.mask_fn_out)
+            shutil.copy(row.lm_fn, row.lm_fn_out)
         else:
             case_mapping = {self.target_label: self.schema[row.lesion_labels]}
             if identical_key_vals(case_mapping):
                 print(
-                    "Identcal mapping for {0}' by default. No remapping needed. Making copy in {1}".format(
+                    "Identical mapping for {0}' by default. No remapping needed. Making copy in {1}".format(
                         case_id, self.out_fldr
                     )
                 )
-                shutil.copy(row.mask_fn, row.mask_fn_out)
+                shutil.copy(row.lm_fn, row.lm_fn_out)
             else:
                 print("Remapping schema: {}".format(case_mapping))
-                mask = sitk.ReadImage(row.mask_fn)
+                mask = sitk.ReadImage(str(row.lm_fn))
                 mask = sitk.Cast(mask, sitk.sitkUInt8)
                 mask = sitk.ChangeLabel(mask, case_mapping)
-                sitk.WriteImage(mask, row.mask_fn_out)
+                sitk.WriteImage(mask, str(row.lm_fn_out))
                 print("Done")
 
     def get_matching_fns(self, row):
@@ -110,9 +112,9 @@ class RemapFromDF:
         if self.excluded(row.lesion_labels) == True:
             return {
                 "img_fn": None,
-                "mask_fn": None,
+                "lm_fn": None,
                 "markup_fn": None,
-                "mask_fn_out": None,
+                "lm_fn_out": None,
             }
         else:
             case_id = row.case_id
@@ -127,7 +129,7 @@ class RemapFromDF:
                 case_id
             )
             img_fn = img_fn[0]
-            mask_fn = find_matching_fn(img_fn, self.mask_fns)
+            lm_fn = find_matching_fn(img_fn, self.lm_fns)
             if row.lesion_labels == "json":
                 markup_fn = [
                     fn
@@ -141,12 +143,12 @@ class RemapFromDF:
             else:
                 markup_fn = None
 
-            mask_fn_out = self.out_fldr / (mask_fn.name)
+            lm_fn_out = self.out_fldr / (lm_fn.name)
             dici = {
                 "img_fn": img_fn,
-                "mask_fn": mask_fn,
+                "lm_fn": lm_fn,
                 "markup_fn": markup_fn,
-                "mask_fn_out": mask_fn_out,
+                "lm_fn_out": lm_fn_out,
             }
             return dici
 
@@ -242,20 +244,21 @@ if __name__ == "__main__":
     imgs_fldr = Path("/s/xnat_shadow/crc/completed/images/")
 
     # df_fn = Path("/s/datasets_bkp/lits_segs_improved/segs_notes.csv")
-    df_fn = Path("/home/ub/Dropbox/AIscreening/data/dcm_summary.xlsx")
-    df = pd.read_excel(df_fn, sheet_name="A")
+    df_fn = Path("/s/xnat_shadow/crc/images_more/images_more_summary_fake.xlsx")
+    df = pd.read_excel(df_fn, sheet_name="Sheet3")
     df.dropna(subset=["case_id", "lesion_labels"], inplace=True)
-    fldr = Path("/s/xnat_shadow/crc/completed/")
+    fldr = Path("/s/xnat_shadow/crc//")
     # int_to_str(ĳkĳk)
 
-    completed = ["CRC" + int_to_str(x, 3) for x in range(101)]
+    completed = ["CRC" + int_to_str(x, 3) for x in range(500)]
 
     df_comp = df.loc[df["case_id"].isin(completed)]
 
     df_comp = df_comp.reset_index()
 # %%
-    RD = RemapFromDF(df_comp, fldr, organ_label=None, target_label=1)
+    RD = RemapFromDF(df_comp, fldr, organ_label=None, target_label=3)
 
+    row = df_comp.iloc[14]
     RD.process()
 # %%
     info_from_filename(
@@ -277,10 +280,10 @@ if __name__ == "__main__":
     if RD.schema is None:
         RD.schema = {"benign": 2, "mets": 3}
     RD.out_fldr = dataset_fldr / "masks_multiclass"
-    RD.mask_fldr = dataset_fldr / "masks"
+    RD.lms_fldr = dataset_fldr / "masks"
     RD.img_fldr = dataset_fldr / "images"
     RD.img_fns = list(RD.img_fldr.glob("*"))
-    RD.mask_fns = list(RD.mask_fldr.glob("*"))
+    RD.lm_fns = list(RD.lms_fldr.glob("*"))
     RD.markup_fns = list((dataset_fldr / "markups").glob("*"))
 
     additional_columns = []

@@ -8,7 +8,7 @@ from networkx.algorithms.bipartite import biadjacency_matrix
 from networkx.algorithms import bipartite as bp
 import pandas as pd
 import numpy as np
-from label_analysis.helpers import inds_to_labels
+from label_analysis.helpers import get_labels, inds_to_labels, relabel
 import itertools as il
 import networkx as nx
 from fran.utils.string import find_file
@@ -26,6 +26,11 @@ def fk_generator(start=0):
 # %%
 if __name__ == "__main__":
 
+    lm_f = "/s/xnat_shadow/crc/lms/crc_CRC306_20161210_Abdomen3p0I30f3.nii.gz"
+    lm = sitk.ReadImage(lm_f)
+    lm = relabel(lm,{2:3})
+    sitk.WriteImage(lm, lm_f)
+    get_labels(lm)
     dsc = np.load("testfiles/dsc_CRC171.npy")
     fn2 = "/s/xnat_shadow/nodes_thick/images/nodes_5_20190529_Abdomen_thick.nii.gz"
     fn1 = "/home/ub/nodes_5_20190529_Abdomen_thick.nii.gz_1.nii"

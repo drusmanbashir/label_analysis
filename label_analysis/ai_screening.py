@@ -1,13 +1,15 @@
 # %%
+import ast
 from functools import reduce
 import sys
 from batchgenerators.utilities.file_and_folder_operations import maybe_mkdir_p
 import shutil
+from label_analysis.geometry import LabelMapGeometry
 from label_analysis.merge import MergeLabelMaps
 
-from label_analysis.overlap import BatchScorer
-from label_analysis.registration import RegisterBSpline
+from label_analysis.overlap import BatchScorer, ScorerFiles
 from label_analysis.remap import RemapFromMarkup
+from label_analysis.utils import is_sitk_file
 
 
 sys.path += ["/home/ub/code"]
@@ -31,21 +33,7 @@ from fran.utils.string import (find_file, info_from_filename, match_filenames,
 
 np.set_printoptions(linewidth=250)
 np.set_printoptions(formatter={"float": lambda x: "{0:0.2f}".format(x)})
-
-
-class RegisterMultiFiles(RegisterBSpline):
-    def __init__(self, f_im, f_lm=None,output_fldr=None) -> None:
-        super().__init__(f_im, f_lm)
-        self.lsf= sitk.LabelShapeStatisticsImageFilter()
-        f_im , f_lm= self.initialize_im_lm(f_im, f_lm) #sitk.ReadImage(f_im)
-        store_attr()
-
-    def process(self, f_im, f_lm):
-        pass
-
-    def save_tfm(self):
-        pass
-        
+       
 
 
 # %%
@@ -58,27 +46,64 @@ if __name__ == "__main__":
     fn3_im= "/s/xnat_shadow/crc/images/crc_CRC275_20161229_CAP1p51.nii.gz"
     fn3_lm= "/s/fran_storage/predictions/litsmc/LITS-933/crc_CRC275_20161229_CAP1p51.nii.gz"
 
-    R = RegisterMultiFiles(fn1_im,fn1_lm)
-    R.compute_tfm(fn2_im,fn2_lm)
-    output_fldr= Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/tfms")
-    output_fn = output_fldr/Path(fn2_im).name
-    sitk.WriteImage(R.cmp_transform,output_fn)
-
-    R.m_lm_t2 = R.apply_init(R.m_lm)
-    R.m_lm_t2 = R.apply_full(R.m_lm_t2)
+#NOTE: Missed lesions collation
 
 
-    f_s = R.f_im.GetSize()
-    m_s = R.m_lm_t.GetSize()
-    scale=[a/b for a,b in zip(f_s,m_s)]
+    gt_fldr = Path("/s/xnat_shadow/crc/lms")
+    gt_fns = list(gt_fldr.glob("*"))
+    gt_fns = [fn for fn in gt_fns if is_sitk_file(fn)]
 
-    st = sitk.ScaleTransform(3, scale)
+    imgs_fldr = Path("/s/xnat_shadow/crc/completed/images")
 
+    results_df = pd.read_excel(
+        "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/results/results_thresh0mm.xlsx"
+    )
 
-    view_sitk(R.m_lm_t,R.m_lm_t2,data_types=['mask','mask'])
-    view_sitk(R.m_im_t,R.m_lm_t2)
-    view_sitk(R.m_lm_t2,R.m_lm_t2)
 # %%
+    out_fldr_missed = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/missed_subcm/")
+    out_fldr_missed_binary = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/missed_subcm_binary/")
+    out_fldr_detected = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/detected_subcm/")
+    out_fldr_detected_binary = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/detected_subcm_binary/")
+
+    cid = "CRC301"
+# %%
+    # lm_fn = [fn for fn in gt_fns if cid in fn.name][0]
+    for lm_fn in pbar(gt_fns):
+        print(lm_fn)
+        cid = info_from_filename(lm_fn.name,full_caseid=True)["case_id"]
+        sub_df = results_df[results_df["case_id"] == cid]
+        sub_df = sub_df[sub_df["fk"]>0]
+        missed = sub_df[sub_df["dsc"].isna() ]
+        missed =missed [missed['gt_length']<=10]
+        cents =     missed['gt_cent'].tolist()
+        cents = [ast.literal_eval(c) for c in cents]
+        if len(missed)>0:
+            L = LabelMapGeometry(lm)
+            excluded = L.nbrhoods[L.nbrhoods['length']>10]
+            lm = sitk.ReadImage(str(lm_fn))
+            excluded = excluded['label_cc'].tolist()
+            remapping_exc = {x:0 for x in excluded}
+            L.lm_cc = relabel(L.lm_cc,remapping_exc)
+
+            missed_nbr =  L.nbrhoods[L.nbrhoods['cent'].isin(cents)]
+            missed_labs = missed_nbr['label_cc'].tolist()
+            remapping_detected = {x:0 for x in missed_labs}
+
+            detected_labs = L.nbrhoods[~L.nbrhoods['label_cc'].isin(missed_labs)]
+            detected_labs= detected_labs['label_cc'].tolist()
+            remapping_missed = {x:0 for x in detected_labs}
+
+            
+            lm_missed= relabel(L.lm_cc,remapping_missed)
+            sitk.WriteImage(lm_missed, str(out_fldr_missed / lm_fn.name))
+
+            lm_missed_binary = to_binary(lm_missed)
+            sitk.WriteImage(lm_missed_binary, str(out_fldr_missed_binary / lm_fn.name))
+
+            lm_detected = relabel(L.lm_cc,remapping_detected)
+            sitk.WriteImage(lm_detected, str(out_fldr_detected / lm_fn.name))
+            lm_detected_binary = to_binary(lm_detected)
+            sitk.WriteImage(lm_detected_binary, str(out_fldr_detected_binary / lm_fn.name))
 # %%
 
 
@@ -282,7 +307,7 @@ if __name__ == "__main__":
 # %%
 
     do_radiomics=False
-    S = Scorer(gt_fn,pred_fn,img_fn=None,ignore_labels_gt=[],ignore_labels_pred=[1],save_matrices=False,do_radiomics=do_radiomics)
+    S = ScorerFiles(gt_fn,pred_fn,img_fn=None,ignore_labels_gt=[],ignore_labels_pred=[1],save_matrices=False,do_radiomics=do_radiomics)
     df = S.process()
 # %%
 

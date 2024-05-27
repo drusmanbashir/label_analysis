@@ -1,5 +1,6 @@
 # %%
 import os
+import ast
 import sys
 import time
 from functools import reduce
@@ -402,8 +403,8 @@ class ScorerFiles:
             self.case_id = info_from_filename(gt_fn.name, full_caseid=True)["case_id"]
         else:
             self.case_id = case_id
-        self.gt, self.pred = [sitk.ReadImage(fn) for fn in [gt_fn, pred_fn]]
-        self.img = sitk.ReadImage(img_fn) if img_fn else None
+        self.gt, self.pred = [sitk.ReadImage(str(fn)) for fn in [gt_fn, pred_fn]]
+        self.img = sitk.ReadImage(str(img_fn)) if img_fn else None
 
         self.LG = LabelMapGeometry(self.gt, ignore_labels_gt)
         self.LP = LabelMapGeometry(self.pred, ignore_labels_pred)
@@ -948,8 +949,8 @@ class BatchScorer:
     def filter_gt_fns(self, gt_fns, partial_df, exclude_fns):
         print("Total gt files: {}".format(len(gt_fns)))
         print("Excluded files: {}".format(len(exclude_fns)))
-        exclude_fns = []
         cid_done = []
+        exclude_fns = []
         if partial_df is not None:
             cid_done = list(partial_df["case_id"].unique())
         if len(exclude_fns) > 0:
@@ -1030,28 +1031,73 @@ if __name__ == "__main__":
     preds_fldr = Path(
         "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc"
     )
-    gt_fldr = Path("/s/xnat_shadow/crc/lms_manual_final")
+    gt_fldr = Path("/s/xnat_shadow/crc/lms")
     gt_fns = list(gt_fldr.glob("*"))
     gt_fns = [fn for fn in gt_fns if is_sitk_file(fn)]
 
     imgs_fldr = Path("/s/xnat_shadow/crc/completed/images")
 
     results_df = pd.read_excel(
-        "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/results/results_thresh0mm_results1.xlsx"
+        "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/results/results_thresh0mm.xlsx"
     )
 
-
+    cid = "crc_CRC255"
+# %c%
+# %%
+    out_fldr_missed = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/missed_subcm/")
+    out_fldr_missed_binary = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/missed_subcm_binary/")
+    out_fldr_detected = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/detected_subcm/")
+    out_fldr_detected_binary = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/detected_subcm_binary/")
 
 # %%
+    for lm_fn in gt_fns:
+        cid = info_from_filename(lm_fn.name,full_caseid=True)["case_id"]
+        sub_df = results_df[results_df["case_id"] == cid]
+        sub_df = sub_df[sub_df["fk"]>0]
+        missed = sub_df[sub_df["dsc"].isna() ]
+        missed =missed [missed['gt_length']<=10]
+        if len(missed)>0:
+
+            lm = sitk.ReadImage(str(lm_fn))
+            L = LabelMapGeometry(lm)
+            cents =     missed['gt_cent'].tolist()
+            excluded = L.nbrhoods[L.nbrhoods['length']>10]
+            excluded = excluded['label_cc'].tolist()
+            cents = [ast.literal_eval(c) for c in cents]
+            remaps = {x:0 for x in excluded}
+            L.lm_cc = relabel(L.lm_cc,remaps)
+
+            missed_nbr =  L.nbrhoods[L.nbrhoods['cent'].isin(cents)]
+            missed_labs = missed_nbr['label_cc'].tolist()
+            other_labs = L.nbrhoods[~L.nbrhoods['label_cc'].isin(missed_labs)]
+            other_labs= other_labs['label_cc'].tolist()
+            remapping_missed = {x:0 for x in other_labs}
+            remapping_detected = {x:0 for x in missed_labs}
+# %%
+            lm_missed= relabel(L.lm_cc,remapping_missed)
+            
+            sitk.WriteImage(lm_missed, str(out_fldr_missed / lm_fn.name))
+
+            lm_missed_binary = to_binary(lm_missed)
+            sitk.WriteImage(lm_missed_binary, str(out_fldr_missed_binary / lm_fn.name))
+            lm_detected = relabel(L.lm_cc,remapping_detected)
+            sitk.WriteImage(lm_detected, str(out_fldr_detected / lm_fn.name))
+            lm_detected_binary = to_binary(lm_detected)
+            sitk.WriteImage(lm_detected_binary, str(out_fldr_detected_binary / lm_fn.name))
+# %%
+
+    view_sitk(L.lm_cc,L.lm_cc)
+
 
     gt_fns.sort(key=os.path.getmtime, reverse=True)
-    files_pending = [fn for fn in gt_fns if test_modified(fn, 3) == True]
+    files_pending = [fn for fn in gt_fns if test_modified(fn, 5) == True]
     cids = [info_from_filename(fn.name)["case_id"] for fn in files_pending]
+    cids = ["crc_"+cid for cid in cids]
 
-    done = ~results_df["case_id"].isin(cids)
+    done = results_df.loc[~results_df["case_id"].isin(cids)]
     # partial_df = results_df.loc[done]
-    partial_df = results_df
     partial_df = None
+    partial_df = done
     # fns_pending = [fn for fn in gt_fns if info_from_filename(fn.name)['case_id'] not in cid_done]
     # cid_done = set(partial_df['case_id'].values)
     # crc1 = "CRC003"
@@ -1059,8 +1105,7 @@ if __name__ == "__main__":
     # gt_fns2 = [find_file(crc1,gt_fns), find_file(crc2,gt_fns)]
 
 
-
-
+# %%
     n_lists = 10
 
     # gt_fns = gt_fns[:64]
@@ -1076,7 +1121,7 @@ if __name__ == "__main__":
     actors = [BatchScorerRay.remote(id) for id in range(n_lists)]
     results = ray.get([c.process.remote(*a) for c,a in zip(actors,args)])
     df = pd.concat(results)
-    df.to_excel("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/results/results_thresh0mm_results.xlsx",index=False)
+    df.to_excel("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/results/results_thresh0mm_repeat.xlsx",index=False)
 # %%
 # %%
 
@@ -1101,86 +1146,5 @@ if __name__ == "__main__":
 # %%
     B.process()
 # %%
-    print("Processing {}".format(S.case_id))
-    S.dust()
-    S.compute_overlap_overall()
-    if S.empty_lm == "neither":
-        S.compute_overlap_perlesion()
-        S.recompute_overlap_perlesion()
-    S.gt_radiomics(debug)
-    S.insert_dsc_fks()
 
 # %%
-
-    df_rad = pd.DataFrame(S.radiomics)
-    LG_out1 = S.LG.nbrhoods.rename(
-        mapper=lambda x: "gt_" + x if not x  in ["dsc", "fk"] else x, axis=1
-    )
-    LG_out2 = df_rad.merge(
-        LG_out1, right_on="gt_label_cc", left_on="label", how="outer"
-    )
-
-    LP_out = S.LP.nbrhoods.rename(
-        mapper=lambda x: "pred_" + x if x != "fk" else x, axis=1
-    )
-
-# %%
-    
-    dfs_all = LG_out2, LP_out
-    df = reduce(lambda rt, lt: pd.merge(rt, lt, on="fk", how="outer"), dfs_all)
-
-    df["pred_fn"] = self.pred_fn
-    df["gt_fn"] = self.gt_fn
-    df["dsc_overall"], df["jac_overall"] = (
-        self.dsc_overall,
-        self.jac_overall,
-    )
-    df["gt_volume_total"] = self.LG.volume_total
-    df["pred_volume_total"] = self.LP.volume_total
-    df["case_id"] = df["case_id"].fillna(value=self.case_id)
-
-# %%
-    # S.df2 = pd.DataFrame({'dsc':float('nan'),'fk':})
-# %%
-    df = pd.read_csv(B.output_fn)
-# %%
-    case_subid = "CRC308"
-    pred_fn = find_file(case_subid, preds_fldr)
-    gt_fn = find_file(case_subid,gt_fns)
-    # pred_fn = find_file(gt_fn.name,preds_fldr)
-
-    S = ScorerAdvanced(gt_fn,pred_fn,dusting_threshold=0, ignore_labels_gt=[],ignore_labels_pred=[1])
-    df3 = S.process()
-
-# %%
-    sitk.WriteImage(S.LG.lm_cc,"testfiles/{}_gt_cc.nii.gz".format(case_subid))
-    sitk.WriteImage(S.LP.lm_cc,"testfiles/{}pred_cc.nii.gz".format(case_subid))
-# %%
-    gt_fn= "/home/ub/code/label_analysis/testfiles/CRC171_gt.nrrd"
-    pred_fn = "/home/ub/code/label_analysis/testfiles/CRC171_pred.nrrd"
-
-    do_radiomics = False
-# %%
-   
-    debug=False
-    S.dust()
-    S.gt_radiomics(debug)
-    S.compute_overlap_overall()
-    if S.empty_lm == "neither":
-        S.compute_overlap_perlesion()
-        # S.recompute_overlap_perlesion()
-# %
-    np.save("testfiles/dsc_CRC171.npy",S.dsc)
-# %%
-# %%
-
-    redundant_cols = ['gt_bbox','gt_rad','pred_bbox','pred_rad','acb']
-    shared = set(redundant_cols).intersection(df3.columns)
-    df3.drop(shared,axis=1)
-# %%
-# %%
-# %%
-
-# %%
-
-#
