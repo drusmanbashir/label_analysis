@@ -90,13 +90,14 @@ class MergeLabelMaps():
 
         self.lm1 = sitk.ReadImage(str(lm_fn1))
         self.lm2 = sitk.ReadImage(str(lm_fn2))
+        assert(self.lm1.GetSize()==self.lm2.GetSize()),"Size mismatch between labelmaps. \nFile 1: {0},\nFile 2: {1}.\n------------------------------------".format(lm_fn1,lm_fn2)
         store_attr('output_fname,remapping1,remapping2')
 
     def process(self):
         self.fix_lm1()
         self.fix_lm2()
         self.merge()
-        self.write_output()
+        # self.write_output()
     def load_images(self,lm_fns):
         self.lm1 = sitk.ReadImage(str(lm_fns[0]))
         self.lm2 = sitk.ReadImage(str(lm_fns[1]))
@@ -113,9 +114,6 @@ class MergeLabelMaps():
             self.lm2 = relabel(self.lm2,self.remapping2)
         self.lm2 = to_int(self.lm2)
         # self.lm2  = sitk.BinaryFillhole(self.lm2)
-
-
-
 
     def merge(self):
         lm1_ar = sitk.GetArrayFromImage(self.lm1)
@@ -402,27 +400,10 @@ def merge_multiprocessor(lm_fns,ignore_labels =[],overwrite=False,n_chunks=12):
 # fname2 = Path( '/s/fran_storage/predictions/lits/ensemble_LITS-408_LITS-385_LITS-383_LITS-357_LITS-413/litqsmall_00000.nrrd')
 # merge_multiprocessor(fname1,fname2,output_fldr,overwrite=True)
 # %%
+# %%
 if __name__ == "__main__":
     # preds_fldr = Path("/s/fran_storage/predictions/lidc2/LITS-913")
-    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933")
-    gt_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/missed_subcm")
 
-
-
-    pred_fns = list(preds_fldr.glob("*"))
-    pred_fns = [fn for fn in pred_fns if is_sitk_file(fn)]
-
-    gt_fns = list(gt_fldr.glob("*"))
-    gt_fns = [fn for fn in gt_fns if is_sitk_file(fn)]
-    gt_fn = gt_fns[0]
-# %%
-    for gt_fn in gt_fns[1:]:
-        pred_fn = find_matching_fn(gt_fn,pred_fns,use_cid=True)
-
-        MergeLiver = MergeLabelMaps(pred_fn,gt_fn,output_fname=gt_fn,remapping1= {2:1,3:1},remapping2={1:99})
-        MergeLiver.process()
-# %%
-    view_sitk(MergeLiver.lm1,MergeLiver.lm2, data_types = ['mask','mask'])
 # %%
 
 
@@ -499,4 +480,5 @@ if __name__ == "__main__":
 
 
 
+    sitk.WriteImage(MergeLiver.lm_merged,str(MergeLiver.output_fname))
 # %%
