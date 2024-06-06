@@ -155,10 +155,7 @@ class LabelMapGeometry(GetAttr):
 
     @property
     def lengths(self):
-        self._lengths = {
-            x: max(self.GetEquivalentEllipsoidDiameter(x)) for x in self.labels
-        }
-        return self._lengths
+        return self.ferets
 
     @property
     def ferets(self):

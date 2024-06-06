@@ -2,6 +2,7 @@
 from label_analysis.helpers import crop_center, get_labels
 import ipdb
 
+from label_analysis.markups import MarkupFromLabelmap
 from registration.groupreg import apply_tfm_file, compound_to_np, create_vector, store_compound_img
 tr = ipdb.set_trace
 
@@ -25,7 +26,7 @@ import SimpleITK as sitk
 from torch.utils.data import DataLoader
 
 from fran.transforms.imageio import LoadSITKd
-from fran.utils.fileio import maybe_makedirs
+from fran.utils.fileio import load_json, maybe_makedirs, save_json
 from fran.utils.helpers import find_matching_fn
 from fran.utils.imageviewers import view_sitk, ImageMaskViewer
 import ast
@@ -54,13 +55,12 @@ from fran.transforms.totensor import ToTensorT
 from fran.utils.fileio import maybe_makedirs
 from fran.utils.helpers import *
 from fran.utils.imageviewers import *
-from fran.utils.string import (find_file, info_from_filename, match_filenames,
+from fran.utils.string import (find_file, info_from_filename, match_filenames, replace_extension,
                                strip_extension, strip_slicer_strings)
 
 np.set_printoptions(linewidth=250)
 np.set_printoptions(formatter={"float": lambda x: "{0:0.2f}".format(x)})
        
-
 
 
 slcs = [slice(0,50), slice(50,100),slice(100,150),slice(150,200),slice(200,250),slice(240,267)]
@@ -80,6 +80,7 @@ def apply_tfm_folder(tfm_fn,input_fldr,output_fldr,slc):
     fn_lms2 = fn_lms[slc].tolist()
     fn_lms2 = [Path(fn) for fn in fn_lms2]
     fn_missed = list(input_fldr.glob("*"))
+    fn_missed = [fn for fn in fn_missed if is_sitk_file(fn)]
     fn_missed2 = []
     for fn in fn_lms2:
         fn_missed_ = find_matching_fn(fn,fn_missed,use_cid=True)
@@ -94,7 +95,7 @@ def apply_tfm_folder(tfm_fn,input_fldr,output_fldr,slc):
     store_compound_img(im_lesions,out_fldr = output_fldr,fnames= fn_missed2)
 
 
-def _get_folders_common_prefix(folder_prefix):
+def _collate_folders_common_prefix(folder_prefix):
     #folder prefix without trailing underscore e.g., "/s/xnat_shadow/crc/registration_output/lms_all"
     folders=[]
     parent_folder = Path("/s/xnat_shadow/crc/registration_output/")
@@ -107,6 +108,17 @@ def _get_folders_common_prefix(folder_prefix):
     return folders
 
 
+def collate_files_common_prefix(prefix):
+
+    fldrs_all = _collate_folders_common_prefix(prefix)
+    fls_all = []
+    for fldr in fldrs_all:
+        fls_= list(fldr.glob("*"))
+        fls_all.extend(fls_)
+    fls_all =list( set(fls_all))
+    return fls_all
+
+
 
 
 def _infer_slice_from_str(string):
@@ -117,27 +129,28 @@ def _infer_slice_from_str(string):
 
 
 def apply_tfms_all(untfmd_fldr, output_folder_prefix):
-    folders = _get_folders_common_prefix(output_folder_prefix)
+    folders = _collate_folders_common_prefix(output_folder_prefix)
     pat = r"\d+_\d+"
     for fldr in folders:
         tfm_suffix = re.search(pat,fldr.name)[0]
         slc = _infer_slice_from_str(tfm_suffix)
         tfm_fn= Path("/s/xnat_shadow/crc/registration_output/TransformParameters.{0}.txt".format(tfm_suffix))
         assert(tfm_fn.exists()),"File not found".format(tfm_fn)
-        apply_tfm_folder(tfm_fn,untfmd_fldr,fldr,slc)
+        apply_tfm_folder(tfm_fn=tfm_fn,input_fldr=untfmd_fldr,output_fldr= fldr,slc= slc)
  
 
-def add_liver(lesions_fldr, liver_fldr,output_fldr):
+def add_liver(lesions_fldr, liver_fldr,output_fldr,overwrite=False):
     ms_fns = lesions_fldr.glob("*")
     ms_fns = [fn for fn in ms_fns if is_sitk_file(fn)]
     liver_fns = list(liver_fldr.glob("*"))
     liver_fns = [fn for fn in liver_fns if is_sitk_file(fn)]
-    for ms_fn in ms_fns:
+    for ms_fn in pbar(ms_fns):
         liver_fn = find_matching_fn(ms_fn,liver_fns,use_cid=True)
         output_fname = output_fldr/(ms_fn.name)
-        MergeLiver = MergeLabelMaps(liver_fn,ms_fn,output_fname=output_fname,remapping1= {2:1,3:1},remapping2={1:99})
-        MergeLiver.process()
-        MergeLiver.write_output()
+        if overwrite==True or not output_fname.exists():
+            MergeLiver = MergeLabelMaps(liver_fn,ms_fn,output_fname=output_fname,remapping1= {2:1,3:1},remapping2={1:99})
+            MergeLiver.process()
+            MergeLiver.write_output()
 
 
 def crop_center_resample(in_fldr,out_fldr, outspacing,outshape):
@@ -174,9 +187,95 @@ def crop_center_resample(in_fldr,out_fldr, outspacing,outshape):
         sitk.WriteImage(l, str(fn_lm_out))
 
 
+class Markups():
+        def __init__(self,outfldr,markup_shape=None):
+                cups = sitk.ReadImage("/s/xnat_shadow/crc/registration_output/lms_missed_50_100/merged_3cups.nrrd")
+                self.shell = relabel(cups,{2:0})
+                self.core = relabel(cups,{3:0})
+                self.outfldr = Path(outfldr)
+                self.markup_shape = markup_shape
 
-def compile_tfmd_files(fns,outfldr):
+        def remove_liver(self,lm):
+            lm = relabel(lm,{1:0})
+            lm = to_binary(lm)
+            return lm
 
+        def process(self,lm_all_fn,lm_det_fn):
+
+            self.case_filename = lm_all_fn
+            lm_all =sitk.ReadImage(str(lm_all_fn))
+            lm_det =sitk.ReadImage(str(lm_det_fn))
+
+            lm_all_core,lm_all_shell,counts_all = self.process_lm(lm_all)
+            lm_det_core,lm_det_shell,counts_det = self.process_lm(lm_det)
+            self.dici = {'all_counts_core':counts_all[0],'all_counts_shell':counts_all[1], 'det_counts_core':counts_det[0],'det_counts_shell':counts_det[1]}
+
+            self.markups_all_core = self.create_markups(lm_all_core,'red',"all_core")
+            self.markups_all_shell = self.create_markups(lm_all_shell,'yellow',"all_shell")
+            self.markups_det_core = self.create_markups(lm_det_core,'blue',"det_core")
+            self.markups_det_shell = self.create_markups(lm_det_shell,'green',"det_shell")
+
+
+        def create_json_fn(self,lm_fn,suffix):
+            lm_fn_name = strip_extension(lm_fn.name)
+            lm_fn_name = "_".join([lm_fn_name,suffix])
+            lm_fn_name =lm_fn_name +".json"
+            fn_out = self.outfldr/lm_fn_name
+            return fn_out
+
+
+        def process_lm(self,lm):
+            lm = self.remove_liver(lm)
+            lm_core,lm_shell = self.split_lm(lm)
+            counts = self.get_core_shell_counts(lm_core,lm_shell)
+            return lm_core,lm_shell,counts
+
+ 
+
+
+        def split_lm(self,lm):
+            lm_core= sitk.Mask(lm,self.shell,outsideValue=0,maskingValue=3)
+            lm_shell = sitk.Mask(lm,self.core,outsideValue=0,maskingValue=2)
+            return lm_core,lm_shell
+
+        def get_core_shell_counts(self,lm_core,lm_shell):
+            LC= LabelMapGeometry(lm_core)
+            count_core= len(LC)
+
+            LS = LabelMapGeometry(lm_shell)
+            count_shell = len(LS)
+            return count_core,count_shell
+
+        def create_markups(self,lm,color,fn_suffix):
+                M = MarkupFromLabelmap([],0,'auto', color)
+                a= M.process(lm)
+                if self.markup_shape is not None:
+                    a['markups'][0]['display']['glyphType']=self.markup_shape
+                fn = self.create_json_fn(self.case_filename,fn_suffix)
+                save_json(a,fn)
+                return a
+
+
+
+
+
+def merge_markups(fns):
+
+        mups_full = load_json(fn)
+        header = mups_full['@schema']
+        mups_base = mups_full['markups']
+        mups_base[0]['display']['glyphSize']= 5.0
+        mups_base[0]['display']['glyphScale']= 1.0
+        for fn in fns[1:]:
+            mups_tmp = load_json(fn)
+            header = mups_tmp['@schema']
+            mups = mups_tmp['markups']
+            cps = mups[0]['controlPoints']
+            mups_base[0]['controlPoints'].extend(cps)
+        dici = {"@schema":header, 'markups':mups_base}
+        return dici
+
+def compile_tfmd_files(fns,outfldr,outspacing):
 
     excludes = ["lesions","liver","merged","react"]
     for exclude in excludes:
@@ -187,22 +286,24 @@ def compile_tfmd_files(fns,outfldr):
     for fn in fns:
         fn2= find_matching_fn(fn,ref_files)
         if fn2:
-            fns_final.append(fn2)
+            fn_already =find_matching_fn(fn,fns_final)
+            if not fn_already:
+                fns_final.append(fn)
     fns_final = set(fns_final)
     print("Total files to compile", len(fns_final))
     lms = [sitk.ReadImage(str(i)) for i in fns_final]
     lms_noliver = [relabel(lm,{1:0}) for lm in lms]
-    lms_noliver = [to_binary(lm) for lm in lms_noliver]
-    lms_noliver = [relabel(lm,{1:2}) for lm in lms_noliver]
-    lms_noliver = [to_int(lm) for lm in lms_noliver]
     lms_nl = create_vector(lms_noliver)
     lms_ar = compound_to_np(lms_nl)
     lms_le_ar = np.sum(lms_ar,0)
+
     lms_liver = [to_binary(lm) for lm in lms]
     lms_l = create_vector(lms_liver)
+
     lms_li_ar = compound_to_np(lms_l)
     lms_li_ar = np.mean(lms_li_ar,0)
-    lms_li_ar[lms_li_ar>0.15]=1
+    lms_li_ar[lms_li_ar>0.02]=1
+
     lms_le = sitk.GetImageFromArray(lms_le_ar)
     lms_le.SetSpacing(outspacing)
     sitk.WriteImage(lms_le, str(outfldr / "lesions.nii.gz"))
@@ -216,12 +317,16 @@ def compile_tfmd_files(fns,outfldr):
     lms_merged.SetSpacing(outspacing)
     print("Writing merged.nii.gz")
     sitk.WriteImage(lms_merged, str(outfldr / "merged.nii.gz"))
+
 # %%
 if __name__ == "__main__":
-# %%
 #SECTION:-------------------- SETUP --------------------------------------------------------------------------------------
     outspacing = [1,1,3]
     outshape = [288,224,64]
+
+    parent =    Path("/s/xnat_shadow/crc/registration_output/")
+
+    mup_fldr = parent/("markups")
     msb_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/missed_subcm_binary/")
     dsb_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/detected_subcm_binary/")
     ds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/detected_subcm/")
@@ -237,7 +342,9 @@ if __name__ == "__main__":
     aslc_fldr =  Path("/s/xnat_shadow/crc/cropped_resampled_all_subcm")
     imgs_fldr = mslc_fldr / ("images")
     mslc_lms_fldr = mslc_fldr / ("lms")
-    maybe_makedirs([aslc_fldr, mslc_lms_fldr])
+    dslc_fldr= Path("/s/xnat_shadow/crc/cropped_resampled_detected_subcm")
+    dslc_lms_fldr = dslc_fldr / ("lms")
+    maybe_makedirs([aslc_fldr, mslc_lms_fldr,dslc_fldr,dslc_lms_fldr])
 
 
 
@@ -257,25 +364,21 @@ if __name__ == "__main__":
     )
 
 # %%
-
-    cid = "CRC212"
-    lm_fn = [fn for fn in gt_fns if cid in fn.name][0]
-# %%
 # lm_fn = [fn for fn in gt_fns if cid in fn.name][0]
-    for lm_fn in pbar(gt_fns[15:]):
-        fn_ms = ms_fldr / lm_fn.name
-        fn_as = as_fldr / lm_fn.name
-        fn_ds = ds_fldr / lm_fn.name
-        cid = info_from_filename(lm_fn.name,full_caseid=True)["case_id"]
+    for fn_ms in pbar(gt_fns[15:]):
+        fn_ms = ms_fldr / fn_ms.name
+        fn_as = as_fldr / fn_ms.name
+        fn_ds = ds_fldr / fn_ms.name
+        cid = info_from_filename(fn_ms.name,full_caseid=True)["case_id"]
         sub_df = results_df[results_df["case_id"] == cid]
         sub_df = sub_df[sub_df["fk"]>0]
 
-        lm = sitk.ReadImage(str(lm_fn))
+        lm = sitk.ReadImage(str(fn_ms))
         L = LabelMapGeometry(lm)
         if L.is_empty():
-            shutil.copy(lm_fn, str(fn_ms))
-            shutil.copy(lm_fn, str(fn_ds))
-            shutil.copy(lm_fn, str(fn_as))
+            shutil.copy(fn_ms, str(fn_ms))
+            shutil.copy(fn_ms, str(fn_ds))
+            shutil.copy(fn_ms, str(fn_as))
         else:
             excluded = L.nbrhoods[L.nbrhoods['length']>10]
             excluded2 = excluded['label_cc'].tolist()
@@ -305,49 +408,39 @@ if __name__ == "__main__":
                     sitk.WriteImage(lm_missed, str(fn_ms))
 
                     lm_missed_binary = to_binary(lm_missed)
-                    sitk.WriteImage(lm_missed_binary, str(msb_fldr / lm_fn.name))
+                    sitk.WriteImage(lm_missed_binary, str(msb_fldr / fn_ms.name))
 
                     lm_detected = relabel(L.lm_cc,remapping_detected)
-                    sitk.WriteImage(lm_detected, str(ds_fldr / lm_fn.name))
+                    sitk.WriteImage(lm_detected, str(ds_fldr / fn_ms.name))
                     lm_detected_binary = to_binary(lm_detected)
-                    sitk.WriteImage(lm_detected_binary, str(dsb_fldr / lm_fn.name))
+                    sitk.WriteImage(lm_detected_binary, str(dsb_fldr / fn_ms.name))
                 else: # if no lesions were missed we should have an empty 'missed lesions' lm
                      # removing all labels
                     sitk.WriteImage(L.lm_cc, str(fn_ds))
                     remapping = {x:0 for x in L.labels}
                     L.lm_cc = relabel(L.lm_cc,remapping)
-                    sitk.WriteImage(L.lm_cc, str(ms_fldr/ lm_fn.name))
+                    sitk.WriteImage(L.lm_cc, str(ms_fldr/ fn_ms.name))
                     # else:
                 #     tr()
-#SECTION:-------------------- Copying empty lms files to missed subcm fldr--------------------------------------------------------------------------------------
-    fns = list(ms_fldr.glob("*"))
-    fns_target = msb_fldr.glob("*")
-    fns_target = [fn for fn in fns_target if is_sitk_file(fn)]
-# %%
-    for fn in fns:
-        if not find_matching_fn(fn,fns_target,use_cid=True):
-            print("Copying ",fn)
-            fn_out = msb_fldr/(fn.name)
-            shutil.copy(fn,fn_out)
-
-
-
-# %%
 #SECTION:-------------------- Add liver  --------------------------------------------------------------------------------------
  
     add_liver(ms_fldr,preds_fldr,msl_fldr)
-    add_liver(as_fldr,preds_fldr,asl_fldr)
-    add_liver(ds_fldr,preds_fldr,dsl_fldr)
+    add_liver(as_fldr,preds_fldr,asl_fldr,True)
+    add_liver(ds_fldr,preds_fldr,dsl_fldr,True)
 
 # %%
 # SECTION:-------------------- CROP CENTER AND RESAMPLE- ---------------------
     
     crop_center_resample(asl_fldr,aslc_fldr,outspacing,outshape)
+    crop_center_resample(dsl_fldr,dslc_fldr,outspacing,outshape)
+    crop_center_resample(msl_fldr,mslc_fldr,outspacing,outshape)
 
 # %%
 #SECTION:-------------------- Apply tfms iteratively (5 tfms)--------------------------------------------------------------------------------------'
 
     apply_tfms_all(aslc_fldr, output_folder_prefix = "lms_all" )
+    apply_tfms_all(dslc_fldr, output_folder_prefix = "lms_ds" )
+    apply_tfms_all(mslc_fldr, output_folder_prefix = "lms_ms" )
         # apply_tfm_folder(tfm_fn,mslc_lms_fldr,out_f_ms,slc)
 
         # compile_tfmd_files(out_f_ms)
@@ -355,55 +448,78 @@ if __name__ == "__main__":
 # %%
 #SECTION:--------------------Super merge ALL merged files (1 merged file per tfm) -------------------------- 
 
-    outfldr_missed =Path("/s/xnat_shadow/crc/registration_output/lms_missed_allfiles")
-
-# %%
-
-    fldrs_all = _get_folders_common_prefix("lms_all")
-    fls_all = []
-    for fldr in fldrs_all:
-        fls_= list(fldr.glob("*"))
-        fls_all.extend(fls_)
-
+    outfldr_missed =Path("/s/xnat_shadow/crc/registration_output/lms_ms_allfiles")
     outfldr_all = Path("/s/xnat_shadow/crc/registration_output/lms_all_allfiles")
-# %%
-    compile_tfmd_files(fls_all,outfldr_all)
-# %%
-#SECTION:-------------------- rough--------------------------------------------------------------------------------------
+    outfldr_detected= Path("/s/xnat_shadow/crc/registration_output/lms_ds_allfiles")
+    maybe_makedirs([outfldr_missed,outfldr_all,outfldr_detected])
 
-    fns1 = "/s/xnat_shadow/crc/registration_output/lms_missed_allfiles/merged.nii.gz"
-    fns2 = "/s/xnat_shadow/crc/registration_output/lms_all_allfiles/merged.nii.gz"
-    lm = sitk.ReadImage(fns1)
-    lm2 = sitk.ReadImage(fns2)
-
-    L = LabelMapGeometry(lm, ignore_labels=[1])
-    L.labels
-    L2 = LabelMapGeometry(lm2, ignore_labels=[1])
-    L2.labels
- 
-
-
+    fls_ms =  collate_files_common_prefix("lms_ms")
+    fls_all = collate_files_common_prefix("lms_all")
+    fls_det = collate_files_common_prefix("lms_ds")
 
 # %%
+    compile_tfmd_files(fls_ms,outfldr_missed,outspacing)
 
+    compile_tfmd_files(fls_all,outfldr_all,outspacing)
+
+    compile_tfmd_files(fls_det,outfldr_detected,outspacing)
 # %%
-    if not L.is_empty():
-        tr()
-    fldr = Path("/s/xnat_shadow/crc/registration_output/lms_missed_100_150/")
-
-    fns = list(fldr.glob("*"))
-    for fn in fns:
-        if is_sitk_file(fn):
-            lm = sitk.ReadImage(str(fn))
-            L = LabelMapGeometry(lm,ignore_labels=[1])
-            if not L.is_empty():
-                tr()
-
-
+#SECTION:--------------------CREATE CORE VERSUS SHELL MARKUPS ----------------------------------------- 
 
 
 # %%
 
+    dicis = []
+    for fn_det in fls_det:
+        cid = info_from_filename(fn_det.name,full_caseid=True)["case_id"]
+        fn_all = [fn for fn in fls_all if fn.name == fn_det.name][0]
+        M = Markups(outfldr =mup_fldr ,markup_shape="Sphere3D")
+        M.process(fn_all,fn_det)
+        M.dici['case_id']=cid
+        dicis.append(M.dici)
+
+
+# %%
+# %%
+    df =pd.DataFrame(dicis)
+    print(df)
+    df.to_csv(parent/("mups.csv"),index=False)
+
+# %%
+    mup_jsons = list(mup_fldr.glob("*"))
+    jsons_all_core = [fn for fn in mup_jsons if "all_core" in fn.name]
+    merged_all_core = merge_markups(jsons_all_core)
+    save_json(merged_all_core,mup_fldr/("all_core.json"))
+
+
+    jsons_all_shell = [fn for fn in mup_jsons if "all_shell" in fn.name]
+    merged_all_shell = merge_markups(jsons_all_shell)
+    save_json(merged_all_shell,mup_fldr/("all_shell.json"))
+
+    jsons_det_core = [fn for fn in mup_jsons if "det_core" in fn.name]
+    merged_det_core = merge_markups(jsons_det_core)
+    save_json(merged_det_core,mup_fldr/("det_core.json"))
+
+    jsons_det_shell = [fn for fn in mup_jsons if "det_shell" in fn.name]
+    merged_det_shell = merge_markups(jsons_det_shell)
+    save_json(merged_det_shell,mup_fldr/("det_shell.json"))
+# %%
+    fns = [fn for fn in mup_jsons if cid in fn.name]
+    fn_all_core = [fn for fn in fns if "all_core" in fn.name][0]
+    fn_all_shell = [fn for fn in fns if "all_shell" in fn.name][0]
+    fn_det_shell = [fn for fn in fns if "det_shell" in fn.name][0]
+    fn_det_core = [fn for fn in fns if "det_core" in fn.name][0]
+    mups_all_core = load_dict(fn_all_core)
+    header = mups_all_core['@schema']
+    mups = mups_all_core['markups']
+    mups[0]['display']['glyphSize']= 5.0
+    mups[0]['display']['glyphScale']= 1.0
+    mups_all.append(mups)
+    
+# %%
+
+# %%
+#SECTION:-------------------- Batch scoring dsc--------------------------------------------------------------------------------------
     df = pd.read_excel("/s/xnat_shadow/crc/dcm_summary_latest.xlsx")
     df = pd.read_excel("/s/xnat_shadow/crc/wxh/wxh_summary.xlsx")
     lesion_masks_folder = Path('/s/xnat_shadow/crc/wxh/masks_manual_todo')
@@ -420,12 +536,12 @@ if __name__ == "__main__":
     fnames_json = list(marksups_fldr.glob("*"))
     for fn_j in fnames_json:
         cid = info_from_filename(fn_j.name)['case_id']
-        lm_fn = [fn for fn in fnames_lab if cid in fn.name]
+        fn_ms = [fn for fn in fnames_lab if cid in fn.name]
 
-        lm_fn = lm_fn[0]
-        lm_fn_out = msl_fldr/(lm_fn.name)
+        fn_ms = fn_ms[0]
+        lm_fn_out = msl_fldr/(fn_ms.name)
         R = RemapFromMarkup(organ_label =None)
-        R.process(lm_fn,lm_fn_out,fn_j)
+        R.process(fn_ms,lm_fn_out,fn_j)
 
 # %%
     # fnames_lab = list(lesion_masks_folder.glob("*"))
@@ -553,7 +669,7 @@ if __name__ == "__main__":
                 elif lab == 'json' or lab == 'markup':
                     fn_js = [fn for fn in fnames_json if case_id in fn.name]
                     if len(fn_js)==1:
-                        R.process(lm_fn,lm_fn_out,fn_js[0])
+                        R.process(fn_ms,lm_fn_out,fn_js[0])
                     else:
                         tr()
 
@@ -614,12 +730,12 @@ if __name__ == "__main__":
     lesion_masks_folder = Path('/s/xnat_shadow/crc/srn/cases_with_findings/masks_no_liver/')
 # %%
     mapping = {1:2}
-    for lm_fn in lesion_masks_folder.glob("*"):
-        lm = sitk.ReadImage(lm_fn)
+    for fn_ms in lesion_masks_folder.glob("*"):
+        lm = sitk.ReadImage(fn_ms)
         lm= to_label(lm)
         lm = sitk.ChangeLabelLabelMap(lm,mapping)
         lm = to_int(lm)
-        sitk.WriteImage(lm,lm_fn)
+        sitk.WriteImage(lm,fn_ms)
 
 
 # %%

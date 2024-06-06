@@ -9,10 +9,25 @@ from fran.utils.fileio import load_dict, load_json, maybe_makedirs, save_json
 from fran.utils.string import find_file, info_from_filename, replace_extension, strip_extension
 tmplt_folder = Path("/home/ub/code/label_analysis/label_analysis/markup_templates/")
 
+
 class MarkupFromLabelmap():
-    def __init__(self ,ignore_labels, dusting_threshold=3) -> None:
-        self.load_templates()
+    def __init__(self ,ignore_labels, dusting_threshold=3,template='auto',color=None) -> None:
+        assert template in ['auto','liver']
+        if color:
+            assert color in self.color_LUT.keys(), "Color has to be one of {}".format(list(self.color_LUT.keys()))
         store_attr()
+        self.load_templates()
+
+
+    @property
+    def color_LUT(self):
+        return{
+            'red':[1.0,0.0,0.0],
+            'green':[0.0,1.0,0.0],
+            'blue':[0.0,0.0,1.0],
+            'yellow':[1,1,0],
+        }
+
 
     def load_templates(self):
         self.main_dict= {
@@ -28,8 +43,63 @@ class MarkupFromLabelmap():
 
     @property
     def template_json(self):
-        return tmplt_folder/("liver_AI.json")
+        if self.template =='liver':
+            return tmplt_folder/("liver_AI.json")
+        elif self.template =='auto':
+            return tmplt_folder/("auto.json")
 
+
+    def process(self, lm):
+        lg = LabelMapGeometry(lm,ignore_labels=self.ignore_labels)
+        lg.dust(self.dusting_threshold)
+        if lg.is_empty():
+                return self.empty_tmplt
+        else:
+            markups=[]
+            for label in lg.labels_unique:
+                schema_active= [dici for dici in self.key if dici['label']==label][0]
+                str_rep = schema_active['str']
+                if self.color:
+                    color = self.color_LUT[self.color]
+                else:
+                    color = schema_active['color']
+                prefix = "_".join(['projtitle','caseid',str_rep ])
+                markup = self.create_label_markup(lg, label, color,prefix)
+                markups.append(markup)
+
+            dic_out = self.main_dict.copy()
+            dic_out['markups']= markups
+            return dic_out
+
+    def create_label_markup(self,lg, label:int, color:list, prefix:str, suffix=''):
+        nbr_short= lg.nbrhoods.query('label=={}'.format(label))
+        cps = []
+        for ind in range(len(nbr_short)):
+            id = str(ind+1)
+            label = "-".join([prefix,id,suffix])
+            orn = list(lg.lm_org.GetDirection())
+            lesion = nbr_short.iloc[ind]
+            pos =  list(lesion.cent)
+            cp = self.create_controlpoint(id,label,pos,orn)
+            cps.append(cp)
+        markup = self.markup_tmplt.copy()
+        markup['controlPoints']= cps
+        markup['display']['color'] = color
+        markup['display']['selectedColor'] = color
+        markup['display']['activeColor'] = color
+        return markup
+
+
+    def create_controlpoint(self,id,label, position, orientation):
+            cp = self.cp_tmplt.copy()
+            cp['associatedNodeID'] = ''
+            cp['id']= id
+            cp['label']=  label
+            cp['position'] = position
+            cp['orientation']= orientation
+            return cp
+
+class MarkupFromLabelFile(MarkupFromLabelmap):
 
     def process(self, lm_fn, outfldr=None, overwrite=False):
         lm_fn = Path(lm_fn)
@@ -60,35 +130,6 @@ class MarkupFromLabelmap():
             save_json(dic_out, outfilename)
 
 
-    def create_label_markup(self,lg, label:int, color:list, prefix:str, suffix=None):
-        nbr_short= lg.nbrhoods.query('label=={}'.format(label))
-        cps = []
-        for ind in range(len(nbr_short)):
-            id = str(ind+1)
-            label = "-".join([prefix,id,suffix])
-            orn = list(lg.lm_org.GetDirection())
-            lesion = nbr_short.iloc[ind]
-            pos =  list(lesion.cent)
-            cp = self.create_controlpoint(id,label,pos,orn)
-            cps.append(cp)
-        markup = self.markup_tmplt.copy()
-        markup['controlPoints']= cps
-        markup['display']['color'] = color
-        markup['display']['selectedColor'] = color
-        markup['display']['activeColor'] = color
-        return markup
-
-
-    def create_controlpoint(self,id,label, position, orientation):
-            cp = self.cp_tmplt.copy()
-            cp['associatedNodeID'] = ''
-            cp['id']= id
-            cp['label']=  label
-            cp['position'] = position
-            cp['orientation']= orientation
-            return cp
-
-
     def create_outfilename(self,outfldr,lm_fn ):
 
         if outfldr is None:
@@ -99,7 +140,7 @@ class MarkupFromLabelmap():
         fn_out = outfldr/fn_out
         return fn_out, outfldr
 
-class MarkupDetectionOnly(MarkupFromLabelmap):
+class MarkupDetectionOnly(MarkupFromLabelFile):
     '''
     This markup relabels every lesion to label 1. It does not discriminate
     '''
@@ -178,13 +219,5 @@ if __name__ == "__main__":
     cp_tmplt =load_json(cp_fn)
     tmplt_files = list(tmplt_folder.glob("*json"))
     schema = load_json(tmplt_folder/("schema_liverAI.json"))
-
-# %%
-    label =2
-    schema_active= [dici for dici in M.key if dici['label']==label][0]
-    str_rep = schema_active['str']
-    color = schema_active['color']
-    prefix = "_".join([case_props['proj_title'],case_props['case_id'],str_rep ])
-    markup = M.create_label_markup(lg, label, color,prefix)
 
 # %%
