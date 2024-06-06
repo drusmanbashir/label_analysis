@@ -36,7 +36,7 @@ import shutil
 from label_analysis.geometry import LabelMapGeometry
 from label_analysis.merge import MergeLabelMaps
 
-from label_analysis.overlap import BatchScorer, ScorerFiles
+from label_analysis.overlap import BatchScorer, ScorerAdvanced, ScorerFiles
 from label_analysis.remap import RemapFromMarkup
 from label_analysis.utils import is_sitk_file
 
@@ -714,14 +714,24 @@ if __name__ == "__main__":
             dups.append(id)
 
 # %%
-    case_subid = "CRC311"
+    case_subid = "CRC234"
     gt_fn = find_file(case_subid,gt_fns) 
     pred_fn= find_file(case_subid,preds_fldr)
 # %%
 
     do_radiomics=False
-    S = ScorerFiles(gt_fn,pred_fn,img_fn=None,ignore_labels_gt=[],ignore_labels_pred=[1],save_matrices=False,do_radiomics=do_radiomics)
+    S = ScorerAdvanced(gt_fn,pred_fn,img_fn=None,ignore_labels_gt=[],ignore_labels_pred=[1],save_matrices=False,do_radiomics=do_radiomics,dusting_threshold=0)
     df = S.process()
+    debug=False
+    print("Processing {}".format(S.case_id))
+    S.dust()
+    S.gt_radiomics(debug)
+    if not S.empty_lm == "neither":
+        S.compute_overlap_perlesion()
+        S.make_one_to_one_dsc()
+    S.compute_overlap_overall()
+    S.cont_tables()
+
 # %%
 
     predicted_masks_folder = Path('/s/xnat_shadow/crc/srn/cases_with_findings/preds_fixed')

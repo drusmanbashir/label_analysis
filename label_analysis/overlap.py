@@ -30,6 +30,10 @@ from fran.utils.string import (find_file, info_from_filename, match_filenames,
 np.set_printoptions(linewidth=250)
 np.set_printoptions(formatter={"float": lambda x: "{0:0.2f}".format(x)})
 
+# %% [markdown]
+## this
+# %%
+
 
 
 def fk_generator(start=0):
@@ -175,7 +179,7 @@ class ScorerLabelMaps:
         ignore_labels_g=[],
         ignore_labels_p=[],
         detection_threshold=0.2,
-        dusting_threshold=3,
+        dusting_threshold=0,
         save_matrices=True,
         results_folder=None,
     ) -> None:
@@ -372,7 +376,7 @@ class ScorerLabelMaps:
         return df
 
 
-class ScorerFiles:
+class ScorerFiles(ScorerLabelMaps):
     """
     input image, mask, and prediction to compute total dice, lesion-wise dice,  and lesion-wise radiomics (based on mask)
     """
@@ -387,7 +391,7 @@ class ScorerFiles:
         ignore_labels_gt=[],
         ignore_labels_pred=[],
         detection_threshold=0.2,
-        dusting_threshold=3,
+        dusting_threshold=0,
         do_radiomics=False,
         save_matrices=True,
         results_folder=None,
@@ -410,76 +414,22 @@ class ScorerFiles:
         self.LP = LabelMapGeometry(self.pred, ignore_labels_pred)
         if not results_folder:
             results_folder = "results"
+        print("Dusting threshold {}".format(dusting_threshold))
         store_attr(but='case_id')
 
     def process(self, debug=False):
-        print("Processing {}".format(self.case_id))
-        self.dust()
-        self.gt_radiomics(debug)
-        if not self.empty_lm == "neither":
-            self.compute_overlap_perlesion()
-            self.make_one_to_one_dsc()
-        self.compute_overlap_overall()
-        self.cont_tables()
-        return self.create_df_full()
-
-    @property
-    def empty_lm(self):
-
-        if len(self.LG.lengths) == 0 and len(self.LP.lengths) == 0:
-            return "both"
-        elif (len(self.LG) == 0) ^ (len(self.LP) == 0):
-            return "one"
-
-        else:
-            return "neither"
-
-    def dust(self):
-        # predicted labels <threshold max_dia will be erased
-        self.LG.dust(self.dusting_threshold)  # sanity check
-        self.LP.dust(self.dusting_threshold)
-
-        self.labs_pred = self.LP.labels
-        self.labs_gt = self.LG.labels
-
-    def compute_overlap_overall(self):
-        if self.empty_lm == "both":
-            self.dsc_overall, self.jac_overall = np.nan, np.nan
-
-        elif self.empty_lm == "one":
-            self.dsc_overall, self.jac_overall = 0.0, 0.0
-        else:
-            self.dsc_overall, self.jac_overall = labels_overlap(
-                self.LG.lm_binary, self.LP.lm_binary, 1, 1
-            )
-
-    def compute_overlap_perlesion(self):
-        print("Computing label jaccard and dice scores")
-        # get jaccard and dice
-
-        prox_labels, prox_inds = self.get_neighbr_labels()
-        self.LG_ind_cc_pairing = {a[0]: b[0] for a, b in zip(prox_inds, prox_labels)}
-        self.LP_ind_cc_pairing = {a[1]: b[1] for a, b in zip(prox_inds, prox_labels)}
-
-        self.dsc = np.zeros(
-            [max(1, len(self.LP)), max(1, len(self.LG))]
-        ).transpose()  # max(1,x) so that an empty matrix is not created
-        self.jac = np.copy(self.dsc)
-        if self.empty_lm == "neither":
-            d = self._dsc_multilabel(prox_labels)
-            # this pairing is a limited number of indices (and corresponding labels) which are in neighbourhoods between LG and LP
-            for i, sc in enumerate(d):
-                ind_pair = list(prox_inds[i])
-                self.dsc[ind_pair[0], ind_pair[1]] = sc[0]
-                self.jac[ind_pair[0], ind_pair[1]] = sc[1]
-
-
-    def _dsc_multilabel(self,prox_labels):
-            args = [[self.LG.lm_cc, self.LP.lm_cc, *a] for a in prox_labels]
-            d = multiprocess_multiarg(
-                labels_overlap, args, 8, False, False, progress_bar=True
-            )  # multiprocess i s slow
-            return d
+        try:
+            print("Processing {}".format(self.case_id))
+            self.dust()
+            self.compute_overlap_overall()
+            if self.empty_lm == "neither":
+                self.compute_overlap_perlesion()
+                self.make_one_to_one_dsc()
+            self.gt_radiomics(debug)
+            self.cont_tables()
+            return self.create_df_full()
+        except:
+            logging.error("Error processing {}".format(self.gt_fn))
 
     def make_one_to_one_dsc(self):
         dsc_cp = self.dsc.copy()
@@ -531,30 +481,8 @@ class ScorerFiles:
             fp_pred_inds = list(np.where(np.all(tt == True, 0))[0])
             self.fp_pred_labels = list(self.LP.nbrhoods.iloc[fp_pred_inds]["label_cc"])
 
-    def gt_radiomics(self, debug):
-        if len(self.labs_gt) == 0:  # or self.do_radiomics == False:
-            radiomics = [{"case_id": self.case_id, "label": 0}]
-        elif self.do_radiomics == False:
-            print("No radiomicss being done. ")
-            radiomics = pd.DataFrame(columns=["case_id", "label"])
-            # self.radiomics=[{"case_id":self.case_id, "gt_fn":self.gt_fn ,"label":lab} for lab in self.LG.nbrhoods['label_cc']]
-
-        else:
-            radiomics = radiomics_multiprocess(
-                self.img,
-                self.LG.lm_cc,
-                self.labs_gt,
-                self.gt_fn,
-                self.params_fn,
-                debug,
-            )
-        self.radiomics = pd.DataFrame(radiomics)
-
 
     def insert_fks(self,df,dummy_fk, inds,fks):
-
-
-        df["fk"]=dummy_fk
         repeat_rows=[]
         for ind,fk in zip(inds,fks):
             existing_fk = df.loc[ind, "fk"]
@@ -702,6 +630,15 @@ class ScorerAdvanced(ScorerFiles):
             maps = {lab:int(main_lab) for lab in gp}
             remapping.update(maps)
         return remapping,dest_labels
+
+
+    def _dsc_multilabel(self,prox_labels):
+            args = [[self.LG.lm_cc, self.LP.lm_cc, *a] for a in prox_labels]
+            d = multiprocess_multiarg(
+                labels_overlap, args, 8, False, False, progress_bar=True
+            )  # multiprocess i s slow
+            return d
+
 
     def recompute_overlap_perlesion(self):
 
@@ -1041,7 +978,7 @@ if __name__ == "__main__":
         "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/results/results_thresh0mm.xlsx"
     )
 
-    cid = "crc_CRC255"
+    cid = "crc_CRC234"
 # %c%
 # %%
     out_fldr_missed = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/missed_subcm/")
