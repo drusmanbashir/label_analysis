@@ -193,6 +193,18 @@ def relabel(lm,remapping:dict):
             print("Could not recast to original pixel type {0}. Returned img is of type {1}".format(org_type, lm_cc.GetPixelID()))
         return lm_cc
 
+
+def empty_img(tmplt_img):
+    size = tmplt_img.GetSize()
+    origin = tmplt_img.GetOrigin()
+    dir =  tmplt_img.GetDirection()
+    spacing =tmplt_img.GetSpacing()
+    img = sitk.Image(size,sitk.sitkUInt8)
+    img.SetOrigin(origin)
+    img.SetDirection(dir)
+    img.SetSpacing(spacing)
+    return img
+
 def to_binary(lm):
     fil = sitk.LabelMapToBinaryImageFilter()
     lm = to_label(lm)
