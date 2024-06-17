@@ -82,7 +82,7 @@ class MergeLabelMaps():
         used when AI generates organ mask stored in fn_label1. User has drawn lesion masks (fn_label2). This algo will merge masks.
 
         lm_fns list:
-            fn_label1 : Provides label 1 (organ).  #NOTE: All others will be erased and holes filled
+            fn_label1 : Provides label 1 (organ).  #NOTE : All others will be erased and holes filled
             fn_label2: Provides label 2  onwards. 
         remapping: list of dicts , one for each of the pair of lm_fns. 
         debug: breakpoint activates if labelmap2 has a label 1.

@@ -37,6 +37,7 @@ def inds_to_labels(inds:list):
 
 
 def get_lm_boundingbox( lm):
+        lm = sitk.Cast(lm,sitk.sitkUInt8)
         lsf = sitk.LabelShapeStatisticsImageFilter()
         lsf.Execute(lm)
         lm_bb = lsf.GetBoundingBox(1)

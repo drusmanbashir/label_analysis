@@ -11,10 +11,10 @@ tmplt_folder = Path("/home/ub/code/label_analysis/label_analysis/markup_template
 
 
 class MarkupFromLabelmap():
-    def __init__(self ,ignore_labels, dusting_threshold=3,template='auto',color=None) -> None:
-        assert template in ['auto','liver']
+    def __init__(self ,ignore_labels, dusting_threshold=3,template='auto',color=None, shape="Sphere3D") -> None:
+        assert template in ['auto','liver'], "Pick a template; either 'auto' or 'liver' "
         if color:
-            assert color in self.color_LUT.keys(), "Color has to be one of {}".format(list(self.color_LUT.keys()))
+            assert color in self.color_LUT.keys(), "Color has to be one of {}".format(self.color_LUT.keys())
         store_attr()
         self.load_templates()
 
@@ -37,7 +37,7 @@ class MarkupFromLabelmap():
         markup_fn= tmplt_folder/("markup.json")
         self.markup_tmplt= load_json(markup_fn)
         self.empty_tmplt = load_json(tmplt_folder/("empty.json"))
-        cp_fn = "label_analysis/markup_templates/controlpoint.json"
+        cp_fn = tmplt_folder/("controlpoint.json")
         self.cp_tmplt =load_json(cp_fn)
         self.key = load_json(self.template_json)
 
@@ -49,7 +49,7 @@ class MarkupFromLabelmap():
             return tmplt_folder/("auto.json")
 
 
-    def process(self, lm):
+    def process(self, lm) -> dict:
         lg = LabelMapGeometry(lm,ignore_labels=self.ignore_labels)
         lg.dust(self.dusting_threshold)
         if lg.is_empty():
@@ -87,6 +87,9 @@ class MarkupFromLabelmap():
         markup['display']['color'] = color
         markup['display']['selectedColor'] = color
         markup['display']['activeColor'] = color
+
+        if self.shape is not None:
+            markup["display"]["glyphType"] = self.shape
         return markup
 
 
@@ -98,6 +101,33 @@ class MarkupFromLabelmap():
             cp['position'] = position
             cp['orientation']= orientation
             return cp
+
+
+class MarkupMultipleFiles(MarkupFromLabelmap):
+    def process(self,lm_fns, out_filename):
+        self.total= 0
+        ind=0
+        # mups_tmp=[]
+        for fn in lm_fns:
+            lm = sitk.ReadImage(str(fn))
+            mup = super().process(lm)
+            if ind==0:
+                mups_final = mup
+                cps  =mup['markups'][0]['controlPoints']
+                self.total+=len(cps)
+                # mups_tmp.append(mup)
+            else:
+                cps = mup['markups'][0]['controlPoints']
+                self.total+=len(cps)
+                print("Number of contol points in {0}: {1}".format(fn, len(cps)))
+                # mups_final = mups_tmp[0]
+                mups_final['markups'][0]['controlPoints'].extend(cps)
+            ind+=1
+
+        save_json(mups_final,out_filename)
+
+    def __len__(self): return self.total
+
 
 class MarkupFromLabelFile(MarkupFromLabelmap):
 
