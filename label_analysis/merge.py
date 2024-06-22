@@ -6,13 +6,13 @@ from pathlib import Path
 from typing import Union
 
 from fastcore.all import store_true
+from label_analysis.utils import align_sitk_imgs
 import pandas as pd
 import SimpleITK as sitk
 from fastcore.basics import store_attr
 from label_analysis.helpers import *
 from label_analysis.overlap import (LabelMapGeometry, get_1lbl_nbrhoods,
                                     labels_overlap )
-from label_analysis.utils import align_sitk_imgs,  is_sitk_file
 
 from fran.utils.fileio import is_filename, maybe_makedirs
 from fran.utils.helpers import *
@@ -311,7 +311,7 @@ class MergeTouchingLabelsFiles():
             lm_fns_final=[]
             for lm_fn in lm_fns:
                 print("Processing {}".format(lm_fn))
-                lm = sitk.ReadImage(lm_fn)
+                lm = sitk.ReadImage(str(lm_fn))
                 lms.append(lm)
                 lm_fns_final.append(lm_fn)
             return lm_fns_final, lms
@@ -402,10 +402,14 @@ def merge_multiprocessor(lm_fns,ignore_labels =[],overwrite=False,n_chunks=12):
 # %%
 # %%
 if __name__ == "__main__":
-    # preds_fldr = Path("/s/fran_storage/predictions/lidc2/LITS-913")
+# %%
+#SECTION:-------------------- SETUP--------------------------------------------------------------------------------------
+
+    preds_fldr_lidc2 = Path("/s/fran_storage/predictions/lidc2/LITS-913")
+    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933")
+    nnunet_fldr = Path("/s/datasets_bkp/ark/")
 
 # %%
-
 
     fixed_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc")
     fixed_fns = list(fixed_fldr.glob("*"))
@@ -414,10 +418,21 @@ if __name__ == "__main__":
     lm_fns_pending = list(il.compress(lm_fns,pending))
 # %%
 
+# %%
+#SECTION:-------------------- Merge separate liver and lesion labelmaps (MP)--------------------------------------------------------------------------------------
+
     overwrite=False
     merge_multiprocessor(lm_fns= lm_fns_pending, overwrite=overwrite,n_chunks= 4, ignore_labels =[1])
 # %%
-    Merger = MergeTouchingLabels(lm_fns[0],ignore_labels=[1])
+# %%
+#SECTION:-------------------- Fix touching labels (e.g., cyst and cancer in single lesion)--------------------------------------------------------------------------------------
+
+    Merger = MergeTouchingLabelsFiles(ignore_labels=[1])
+    Merger.process_batch(lm_fns=lm_fns_pending,overwrite=overwrite)
+# %%
+#SECTION:-------------------- MORE--------------------------------------------------------------------------------------
+
+    Mergr = MergeTouchingLabels()
     lm_fixed = Merger.process()
     sitk.WriteImage(lm_fixed,lm_fn.str_replace(".nii","_fixed.nii"))
 

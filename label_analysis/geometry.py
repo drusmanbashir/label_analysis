@@ -6,7 +6,6 @@ import time
 from functools import reduce
 
 from label_analysis.helpers import remap_single_label
-from label_analysis.utils import is_sitk_file
 
 sys.path += ["/home/ub/code"]
 import itertools as il

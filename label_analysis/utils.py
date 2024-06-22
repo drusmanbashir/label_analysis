@@ -30,18 +30,6 @@ import itertools
 
 # %%
 
-@str_to_path()
-def is_sitk_file(fn: Path):
-    if fn.is_dir(): return False
-    fn_name = fn.name
-    sitk_exts = ".nii", ".nrrd"
-    for ext in sitk_exts:
-        if ext in fn_name:
-            return True
-    return False
-
-
-
 
 
 def long_short_axes(lm_cc,label:int):
