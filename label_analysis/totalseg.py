@@ -1,7 +1,9 @@
 
 # %%
+import re
 from label_analysis.helpers import get_labels, relabel
 from label_analysis.merge import merge
+from label_analysis.overlap import fk_generator
 import pandas as pd
 from pathlib import Path
 import SimpleITK as sitk
@@ -56,6 +58,39 @@ if __name__ == "__main__":
     l2 = get_labels(lm2)
 
 # %%
+# %%
+#SECTION:-------------------- CREATING simple labelset--------------------------------------------------------------------------------------
+    df = TSL.df
+
+    df.structure
+    cr = df.structure
+    pat = "_left|_right"
+    ents=[]
+# %%
+    for aa in cr:
+        # aa=    cr.iloc[0]
+        b = re.sub(pat,"",aa)
+        ents.append(b)
+
+    df = df.assign(short = ents)
+    df_n = Path("/s/datasets_bkp/totalseg/meta_new.csv")
+    df.to_csv(df_n)
+# %%
+    key = fk_generator(1)
+    df = pd.read_csv(df_n)
+    short = df.short_name
+    dones={}
+    for aa in short:
+        if not aa in dones.keys():
+            label = next(key)
+            dici = {aa:label}
+            dones.update(dici)
+# %%
+    labs =[]
+    for aa in short:
+        lab = dones[aa]
+        labs.append(lab)
+    df = df.assign(label_short= labs)
 # %%
     lr= TSL.labels("lung","right")
     ll = TSL.labels("lung","left")

@@ -2,15 +2,23 @@
 from pathlib import Path
 from fastcore.basics import store_attr
 
-from label_analysis.helpers import get_labels, relabel, single_label
+from label_analysis.helpers import get_labels, relabel, single_label, to_cc
 from label_analysis.geometry import LabelMapGeometry
 import SimpleITK as sitk
 from fran.utils.fileio import load_dict, load_json, maybe_makedirs, save_json
+from fran.utils.imageviewers import view_sitk
 from fran.utils.string import find_file, info_from_filename, replace_extension, strip_extension
 tmplt_folder = Path("/home/ub/code/label_analysis/label_analysis/markup_templates/")
 
 
 class MarkupFromLabelmap():
+    '''
+    
+    Each lesion is assigned a markup controlpoint. The controlpoint properties are based on the lesion label. This is in turn dicated by  ...
+    template used
+
+    '''
+    
     def __init__(self ,ignore_labels, dusting_threshold=3,template='auto',color=None, shape="Sphere3D") -> None:
         assert template in ['auto','liver'], "Pick a template; either 'auto' or 'liver' "
         if color:
@@ -220,18 +228,30 @@ class MarkupDetectionOnly(MarkupFromLabelFile):
 # %%
 if __name__ == "__main__":
 
-    M = MarkupDetectionOnly(ignore_labels=[],dusting_threshold=0 )
+# %%
+#SECTION:--------------------  setup--------------------------------------------------------------------------------------
+
     # preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-787_mod/")
     preds_fldr = Path("/s/fran_storage/predictions/lidc2/LITS-913_fixed_mc/")
     gt_fldr = Path("/s/xnat_shadow/crc/lms_manual_final/")
-    lm_fns = ["/s/xnat_shadow/crc/lms_manual_final/crc_CRC138_20180812_Abdomen3p0I30f3.nii.gz"]
-    lm_fns = list(gt_fldr.glob("*.*"))
-    subid = "CRC002"
-    lm_fn = find_file(subid, lm_fns)
+    nodes_fldr = Path("/s/xnat_shadow/nodesthick/lms")
+    outfldr = nodes_fldr.parent/("markups")
+    lm_fns = list(nodes_fldr.glob("*.nii.gz"))
+
+    lm_fns = ["/s/xnat_shadow/nodes/lms/nodes_70_20210804_ChestAbdomenPelviswithIVC1p00Hr40S3.nii.gz"]
     # lm_fn = "/s/fran_storage/predictions/lidc2/LITS-913/lung_038.nii.gz"
-    for lm_fn in lm_fns:
-        M.process(lm_fn,overwrite=False,outfldr="/s/xnat_shadow/crc/markups")
+    maybe_makedirs([outfldr])
+
 # %%
+# %%
+#SECTION:-------------------- Add markups--------------------------------------------------------------------------------------
+
+    M = MarkupDetectionOnly(ignore_labels=[],dusting_threshold=0 )
+# %%
+    for lm_fn in lm_fns:
+        M.process(lm_fn,overwrite=True,outfldr=outfldr)
+# %%
+#SECTION:-------------------- all labels remapped to LABEL 1 
     for lm_fn in lm_fns:
         M.process(lm_fn,overwrite=True)
     lm = sitk.ReadImage(lm_fn)
@@ -250,4 +270,27 @@ if __name__ == "__main__":
     tmplt_files = list(tmplt_folder.glob("*json"))
     schema = load_json(tmplt_folder/("schema_liverAI.json"))
 
+# %%
+#SECTION:-------------------- ROUGH--------------------------------------------------------------------------------------
+
+    lm_fn = lm_fns[0]
+    lm = sitk.ReadImage(lm_fn)
+    lm_cc = to_cc(lm)
+# %%
+    di = sitk.SignedMaurerDistanceMap(lm!=0,insideIsPositive=False,squaredDistance=False,useImageSpacing=False)
+    radius = .3
+    seeds = sitk.ConnectedComponent(di<radius)
+    ws = sitk.MorphologicalWatershedFromMarkers(di, seeds, markWatershedLine=True)
+    ws2 = sitk.Mask( ws, sitk.Cast(lm, ws.GetPixelID()))
+# %%
+    view_sitk(ws2,ws,'mm')
+# %%
+
+    radius2 = 30
+    seeds2 = sitk.ConnectedComponent(di<radius2)
+    ws3 = sitk.MorphologicalWatershedFromMarkers(di, seeds2, markWatershedLine=True)
+    ws4 = sitk.Mask( ws3, sitk.Cast(lm, ws.GetPixelID()))
+
+    view_sitk(ws3,ws,'mm')
+# %%
 # %%

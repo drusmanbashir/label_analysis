@@ -1,10 +1,6 @@
 # %%
 import re
 import matplotlib.pyplot as plt
-from label_analysis.overlap import ScorerAdvanced, ScorerFiles
-from pathlib import Path
-from label_analysis.utils import is_sitk_file
-from networkx.algorithms.bipartite import biadjacency_matrix
 from networkx.algorithms import bipartite as bp
 import pandas as pd
 import numpy as np
