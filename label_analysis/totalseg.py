@@ -18,11 +18,13 @@ class TotalSegmenterLabels():
         self.df= pd.read_excel(meta_fn, sheet_name="labels")
         self.meta =  pd.read_excel(meta_fn, sheet_name="meta")
 
-    def labels(self,organ,side=None):
+    def labels(self,organ="all",side=None):
+        if organ=="all":
+            return self.df.structure.to_list()
         if side:
-            labs = self.df.loc[(self.df['organ']==organ) & (self.df['side']==side)]
+            labs = self.df.loc[(self.df['structure_short']==organ) & (self.df['side']==side)]
         else:
-            labs = self.df.loc[(self.df['organ']==organ) ]
+            labs = self.df.loc[(self.df['structure_short']==organ) ]
         labs_out = labs['label'].to_list()
         return labs_out
 
@@ -41,7 +43,7 @@ class TotalSegmenterLabels():
 
 
     @property
-    def all(self):return list(range(1,118))
+    def all(self):return self.df.label.to_list()
 
 
 # %%
