@@ -1,15 +1,17 @@
-
 # %%
+from label_analysis.radiomics import *
 import SimpleITK as sitk
-from fran.utils.helpers import multiprocess_multiarg
-from label_analysis.helpers import remove_organ_label
-from label_analysis.overlap import LabelMapGeometry, Scorer
+from fran.utils.helpers import chunks, find_matching_fn, info_from_filename, multiprocess_multiarg
+from label_analysis.helpers import get_labels, relabel, remove_organ_label, to_cc
+from label_analysis.overlap import LabelMapGeometry
 from pathlib import Path
 import pandas as pd
 
 import sys
 from fran.utils.imageviewers import view_sitk, ImageMaskViewer
 from fran.utils.string import find_file
+
+from label_analysis.radiomics import radiomics_multiprocess
 sys.path+=["/home/ub/code"]
 from label_analysis.helpers import to_int, to_label
 import SimpleITK as sitk
@@ -89,3 +91,33 @@ if __name__ == "__main__":
     S = Scorer(gt_fn,pred_fn,img_fn=None,ignore_labels_gt=[],ignore_labels_pred=[1],save_matrices=False,do_radiomics=do_radiomics)
     df = S.process()
 #
+# %%
+#SECTION:-------------------- SETUP--------------------------------------------------------------------------------------
+
+# %%
+
+
+
+
+# %%
+
+    ignore_labels =[1]
+    args = [[gt_fn, find_matching_fn(gt_fn, img_fns,True),ignore_labels] for gt_fn in gt_fns]
+    fn = gt_fns[2]
+    case_id = info_from_filename(fn.name,True)["case_id"]
+    img_fn = find_matching_fn(fn,img_fns,True)
+    img = sitk.ReadImage(img_fn)
+    lm= sitk.ReadImage(fn)
+    L = LabelMapGeometry(fn,[1],img)
+    L.radiomics()
+
+    labs_cc = L.nbrhoods['label_cc']
+    if len(labs_cc)>0:
+        rads = radiomics_multiprocess(img,L.lm_cc,labs_cc,gt_fn,)
+        rads[1]['label']
+        mini_df = pd.DataFrame(rads)
+        L.nbrhoods= L.nbrhoods.merge(mini_df,left_on='label_cc',right_on='label')
+
+    L.nbrhoods.to_csv("tmp.csv")
+# %%
+

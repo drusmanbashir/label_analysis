@@ -1,5 +1,7 @@
-import os
 # %%
+import os
+
+from label_analysis.radiomics import *
 import logging
 import sys
 import time
@@ -33,12 +35,18 @@ class LabelMapGeometry(GetAttr):
 
     _default = "fil"
 
-    def __init__(self, lm: sitk.Image, ignore_labels=[], img=None):
+    def __init__(self, lm: Union[sitk.Image,str,Path], ignore_labels=[], img=None):
+        if isinstance(lm,Union [Path,str]):
+            self.lm_fn = lm
+            lm = sitk.ReadImage(lm)
+        else:
+            self.lm_fn = None
         self.fil = sitk.LabelShapeStatisticsImageFilter()
         self.fil.ComputeFeretDiameterOn()
         if len(ignore_labels) > 0:
             remove_labels = {l: 0 for l in ignore_labels}
             lm = relabel(lm, remove_labels)
+        self.img = img
         self.lm_org = lm
         self.create_lm_binary()
         self.create_lm_cc()  # creates ordered labelmap from original labels and a key mapping
@@ -76,17 +84,19 @@ class LabelMapGeometry(GetAttr):
             self.lm_cc = sitk.Image()
 
     def calc_geom(self):
-        columns = ["label", "label_cc", "cent","bbox", "rad", "length", "volume"]
+        columns = ["label", "label_cc", "cent","bbox", "flatness", "rad", "length", "volume"]
         vals_all = []
         if hasattr(self, "key"):
             for key, value in self.key.items():
                 centroid = self.GetCentroid(key)
                 bbox = self.GetBoundingBox(key)
+                flatness = self.GetFlatness(key)
                 vals = [
                     value,
                     key,
                     centroid,
                     bbox,
+                    flatness,
                     self.ferets[key]/2,
                     self.ferets[key],
                     self.volumes[key],
@@ -97,34 +107,53 @@ class LabelMapGeometry(GetAttr):
                 [
                     0,
                 ]
-                * 7
+                * 8
             )
         self.nbrhoods = pd.DataFrame(data=vals_all, columns=columns)
 
-    def dust(self, dusting_threshold):
+    def dust(self, dusting_threshold,remove_flat=True):
+        # dust below length threshold
         inds_small = [l < dusting_threshold for l in self.lengths.values()]
         self.labels_small = list(il.compress(self.labels, inds_small))
+        # self.labels_flat = 
         self._remove_labels(self.labels_small)
+        if remove_flat==True:
+            labs_flat =self.nbrhoods['label_cc'][ self.nbrhoods['flatness']==0].tolist()
+            print("Removing flat (2D) labels {}",labs_flat)
+            self._remove_labels(labs_flat)
 
     def _remove_labels(self, labels):
         dici = {x: 0 for x in labels}
         print("Removing labels {0}".format(labels))
-        self.relabel(dici)
+        self._relabel(dici)
         self.nbrhoods = self.nbrhoods[~self.nbrhoods["label_cc"].isin(labels)]
         self.nbrhoods.reset_index(inplace=True, drop=True)
         for l in labels:
             del self.key[l]
+        logging.info("Neighbourhoods adjusted. {0} removed".format(labels))
 
     def execute_filter(self):
         self.lm_cc = to_int(self.lm_cc)
         self.fil.Execute(self.lm_cc)
 
-    def relabel(self, remapping):
+    def _relabel(self, remapping):
         remapping = np_to_native_dict(remapping)
         self.lm_cc = to_label(self.lm_cc)
         self.lm_cc = sitk.ChangeLabelLabelMap(self.lm_cc, remapping)
         self.execute_filter()
         logging.warning("Labelmap labels have been changed. The nbrhoods df is still as before")
+
+
+    def radiomics(self, params_fn=None):
+        labs_cc = self.nbrhoods['label_cc']
+        if len(labs_cc)>0:
+            rads = radiomics_multiprocess(self.img,self.lm_cc,labs_cc,self.lm_fn,params_fn = params_fn)
+            mini_df = pd.DataFrame(rads)
+            self.nbrhoods= self.nbrhoods.merge(mini_df,left_on='label_cc',right_on='label')
+        else:
+            print("No labels found in labelmap. Radiomics not computed")
+
+ 
 
     def is_empty(self):
         return True if self.__len__() == 0 else False
@@ -170,21 +199,95 @@ class LabelMapGeometry(GetAttr):
 
 # %%
 if __name__ == "__main__":
+# %%
+#SECTION:-------------------- SETUP--------------------------------------------------------------------------------------
+
+    from fran.managers.datasource import _DS
+    DS = _DS()
     preds_fldr = Path(
         "/s/fran_storage/predictions/litsmc/LITS-940_fixed_mc"
     )
+    test_lms_fldr = Path("/s/xnat_shadow/crc/lms")
+    train_fldrs = DS.lits['folder'], DS.litq['folder'] , DS.drli['folder'], DS.litqsmall['folder']
+    train_lms_fldrs= [Path(fldr)/("lms") for fldr in train_fldrs]
+    train_img_fldrs = [Path(fldr)/("images") for fldr in train_fldrs]
+    train_img_fns =[list(fldr.glob("*")) for fldr in train_img_fldrs]
+    train_img_fns = list(il.chain.from_iterable(train_img_fns))
+    train_lm_fns = [list(fldr.glob("*")) for fldr in train_lms_fldrs]
+    train_lm_fns = list(il.chain.from_iterable(train_lm_fns))
+
+    test_imgs_fldr = Path("/s/xnat_shadow/crc/images")
+    pred_fns = list(preds_fldr.glob("*"))
+    test_lm_fns =  list(test_lms_fldr.glob("*"))
+    test_img_fns =  list(test_imgs_fldr.glob("*"))
+# %%
+#SECTION:-------------------- RADIOMICS--------------------------------------------------------------------------------------
 
 # %%
-    gt_fldr = Path("/s/xnat_shadow/crc/lms_manual_final")
-    gt_fns = list(gt_fldr.glob("*"))
-    gt_fns = [fn for fn in gt_fns if is_sitk_file(fn)]
+    indices = range(len(train_lm_fns))
+    for ind in indices:
+        gt_fn = train_lm_fns[ind]
+        img_fn = find_matching_fn(gt_fn,train_img_fns)
+# %%
+# %%
+    # fldr=Path("/home/u/code/label_analysis/label_analysis/results/")
+    # fns = list(Path("/home/u/code/label_analysis/label_analysis/results/").glob("*csv"))
+    # dfs = [pd.read_csv(fn) for fn in fns]
+    # df2 = pd.concat(dfs,ignore_index=True)
+    # df2.drop_duplicates(inplace=True)
+    # len(df2)
+    # df2.to_csv(fldr/("final.csv"))
+    # fns = df2['fn']
+    # fns = [Path(fn) for fn in fns]
+    # fns = set(fns)
+    #
+    # left = set(test_lm_fns).difference(fns)
+    # len(left)
+# %%
+    hoods= []
+    for ind in indices:
+        gt_fn = train_lm_fns[ind]
+        # gt_fn = test_lm_fns[ind]
+        img_fn = find_matching_fn(gt_fn,train_img_fns)
+        img = sitk.ReadImage(img_fn)
+        L = LabelMapGeometry(gt_fn,[1],img)
 
-    imgs_fldr = Path("/s/xnat_shadow/crc/completed/images")
+        if not L.is_empty():
+            L.dust(3)
+            L.radiomics()
+        else:
+            L.nbrhoods['fn']= gt_fn
 
-    results_df = pd.read_excel(
-        "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/results/results_thresh0mm_results.xlsx",
-        index_col=None,
-    )
+        hoods.append(L.nbrhoods)
+        if ind%15==0:
+            dff= pd.concat(hoods,ignore_index=True)
+            dff.to_csv("label_analysis/results/hoods{}.csv".format(str(ind)))
+# %%
+
+# %%
+
+# %%
+#SECTION:-------------------- TROUBLESHOOTJko--------------------------------------------------------------------------------------
+# %%
+    L.nbrhoods
+# %%
+    for lab in labs_cc:
+        print("="*20)
+        print(lab)
+        print(L.fil.GetFlatness(lab))
+# %%
+    labs_cc = L.nbrhoods['label_cc']
+    params_fn = None
+    for lab in labs_cc:
+        rads = do_radiomics(L.img,L.lm_cc,lab,L.lm_fn,paramsFile = params_fn)
+# %%
+            # rads = radiomics_multiprocess(L.img,L.lm_cc,labs_cc,L.lm_fn,params_fn = params_fn)
+            # mini_df = pd.DataFrame(rads)
+            # L.nbrhoods= L.nbrhoods.merge(mini_df,left_on='label_cc',right_on='label')
+
+# %%
+# %%
+
 
 
     # results_df["case444"] = results_df["pred_fn"].apply(

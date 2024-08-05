@@ -4,6 +4,7 @@ import ast
 import sys
 import time
 from functools import reduce
+from radiomics import featureextractor
 
 from batchgenerators.utilities.file_and_folder_operations import maybe_mkdir_p
 import networkx as nx
@@ -141,34 +142,6 @@ def get_all_nbrhoods(labelmap, dusting_threshold=5):
     df_final.reset_index(inplace=True, drop=True)
     return df_final
 
-
-def do_radiomics(img, mask, label, mask_fn, paramsFile=None):
-    if not paramsFile:
-        paramsFile = "label_analysis/configs/params.yaml"
-    extractor = featureextractor.RadiomicsFeatureExtractor(paramsFile)
-
-    featureVector = {}
-    featureVector["case_id"] = info_from_filename(mask_fn.name)["case_id"]
-    featureVector["fn"] = mask_fn
-    featureVector2 = extractor.execute(img, mask, label=label)
-    featureVector["label"] = featureVector2["diagnostics_Configuration_Settings"][
-        "label"
-    ]
-    featureVector.update(featureVector2)
-    return featureVector
-
-
-def radiomics_multiprocess(img, mask, labels, mask_fn, params_fn, debug=False):
-    print("Computing mask label radiomics")
-    args = [[img, mask, label, mask_fn, params_fn] for label in labels]
-    radiomics = multiprocess_multiarg(
-        do_radiomics,
-        args,
-        num_processes=np.maximum(len(args), 1),
-        multiprocess=True,
-        debug=debug,
-    )
-    return radiomics
 
 
 class ScorerLabelMaps:
@@ -711,8 +684,8 @@ class ScorerAdvanced(ScorerFiles):
             self.df2.append(dici)
 
         self.df2 = pd.DataFrame(self.df2)
-        self.LG.relabel(gt_remaps)
-        self.LP.relabel(pred_remaps)
+        self.LG._relabel(gt_remaps)
+        self.LP._relabel(pred_remaps)
 
         redsc_labels = self.df2.loc[self.df2["recompute_dsc"] == True, "fk"].tolist()
         prox_labels = [[a, a] for a in redsc_labels]
