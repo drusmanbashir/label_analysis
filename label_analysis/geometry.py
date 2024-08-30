@@ -119,7 +119,7 @@ class LabelMapGeometry(GetAttr):
         self._remove_labels(self.labels_small)
         if remove_flat==True:
             labs_flat =self.nbrhoods['label_cc'][ self.nbrhoods['flatness']==0].tolist()
-            print("Removing flat (2D) labels {}",labs_flat)
+            print("Removing flat (2D) labels: ")
             self._remove_labels(labs_flat)
 
     def _remove_labels(self, labels):
@@ -130,7 +130,7 @@ class LabelMapGeometry(GetAttr):
         self.nbrhoods.reset_index(inplace=True, drop=True)
         for l in labels:
             del self.key[l]
-        logging.info("Neighbourhoods adjusted. {0} removed".format(labels))
+        logging.warning("Neighbourhoods adjusted. {0} removed".format(labels))
 
     def execute_filter(self):
         self.lm_cc = to_int(self.lm_cc)

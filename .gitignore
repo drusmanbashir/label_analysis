@@ -14,3 +14,5 @@ __pycache__/
 *.nii.*
 *.stl
 *.obj
+!testfiles/gt.nii.gz
+!testfiles/pred.nii.gz

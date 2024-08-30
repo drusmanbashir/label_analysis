@@ -20,7 +20,7 @@ class TotalSegmenterLabels():
 
     def labels(self,organ="all",side=None):
         if organ=="all":
-            return self.df.structure.to_list()
+            return self.df.label.to_list()
         if side:
             labs = self.df.loc[(self.df['structure_short']==organ) & (self.df['side']==side)]
         else:

@@ -4,29 +4,39 @@ import matplotlib.pyplot as plt
 from networkx.algorithms import bipartite as bp
 import pandas as pd
 import numpy as np
-from label_analysis.helpers import get_labels, inds_to_labels, relabel
+from label_analysis.geometry import LabelMapGeometry
+from label_analysis.helpers import get_labels, inds_to_labels, relabel, to_cc
 import itertools as il
 import networkx as nx
 from fran.utils.string import find_file
 from scipy.sparse import csr, csr_matrix 
 import SimpleITK as sitk
-# %%
 
-def fk_generator(start=0):
-    key = start
-    while True:
-        yield key
-        key+=1
-
-# %%
 # %%
 if __name__ == "__main__":
 
-    lm_f = "/s/xnat_shadow/crc/lms/crc_CRC306_20161210_Abdomen3p0I30f3.nii.gz"
+    lm_f = "/s/xnat_shadow/crc/lms/crc_CRC211_20170724_AbdoPelvis1p5.nii.gz"
     lm = sitk.ReadImage(lm_f)
-    lm = relabel(lm,{2:3})
+    LG = LabelMapGeometry(lm)
+    lm_cc = to_cc(lm)
+
+    fn1 = "gt_lm_cc_unaltered.nii.gz"
+    sitk.WriteImage(lm_cc, fn1)
+# %%
+    lm_f2 = "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/crc_CRC211_20170724_AbdoPelvis1p5.nii.gz"
+    lm2 = sitk.ReadImage(lm_f2)
+    LP = LabelMapGeometry(lm2,[1])
+    LP.nbrhoods
+    lm_cc2 = to_cc(lm2)
+
+    fn2 = "pred_lm_cc_unaltered.nii.gz"
+    sitk.WriteImage(lm_cc2, fn2)
+# %%
+
+    print(get_labels(lm))
+    lm = relabel(lm,{1:3})
     sitk.WriteImage(lm, lm_f)
-    get_labels(lm)
+# %%
     dsc = np.load("testfiles/dsc_CRC171.npy")
     fn2 = "/s/xnat_shadow/nodes_thick/images/nodes_5_20190529_Abdomen_thick.nii.gz"
     fn1 = "/home/ub/nodes_5_20190529_Abdomen_thick.nii.gz_1.nii"
