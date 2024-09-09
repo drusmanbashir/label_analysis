@@ -27,6 +27,21 @@ from fran.utils.string import (find_file, info_from_filename, match_filenames,
 
 np.set_printoptions(linewidth=250)
 np.set_printoptions(formatter={"float": lambda x: "{0:0.2f}".format(x)})
+
+def make_zero_df(colnames):
+    df_ln = len(colnames)
+    vals_all = []
+    vals_all.append(
+                [
+                    0,
+                ]
+                * df_ln
+            )
+    df = pd.DataFrame(vals_all, columns=colnames)
+    return df
+
+
+
 class LabelMapGeometry(GetAttr):
     """
     lm: can have multiple labels
@@ -102,25 +117,20 @@ class LabelMapGeometry(GetAttr):
                     self.volumes[key],
                 ]
                 vals_all.append(vals)
+            self.nbrhoods = pd.DataFrame(data=vals_all, columns=columns)
         else:
-            vals_all.append(
-                [
-                    0,
-                ]
-                * 8
-            )
-        self.nbrhoods = pd.DataFrame(data=vals_all, columns=columns)
-
+            self.nbrhoods = make_zero_df(columns)
     def dust(self, dusting_threshold,remove_flat=True):
-        # dust below length threshold
-        inds_small = [l < dusting_threshold for l in self.lengths.values()]
-        self.labels_small = list(il.compress(self.labels, inds_small))
-        # self.labels_flat = 
-        self._remove_labels(self.labels_small)
-        if remove_flat==True:
-            labs_flat =self.nbrhoods['label_cc'][ self.nbrhoods['flatness']==0].tolist()
-            print("Removing flat (2D) labels: ")
-            self._remove_labels(labs_flat)
+        if not self.is_empty():
+            # dust below length threshold
+            inds_small = [l < dusting_threshold for l in self.lengths.values()]
+            self.labels_small = list(il.compress(self.labels, inds_small))
+            # self.labels_flat = 
+            self._remove_labels(self.labels_small)
+            if remove_flat==True and len(self.nbrhoods) > 0:
+                labs_flat =self.nbrhoods['label_cc'][ self.nbrhoods['flatness']==0].tolist()
+                print("Removing flat (2D) labels: ")
+                self._remove_labels(labs_flat)
 
     def _remove_labels(self, labels):
         dici = {x: 0 for x in labels}
@@ -131,6 +141,8 @@ class LabelMapGeometry(GetAttr):
         for l in labels:
             del self.key[l]
         logging.warning("Neighbourhoods adjusted. {0} removed".format(labels))
+        if self.is_empty():
+            self.nbrhoods = make_zero_df(self.nbrhoods.columns)
 
     def execute_filter(self):
         self.lm_cc = to_int(self.lm_cc)

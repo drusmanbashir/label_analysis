@@ -1,4 +1,3 @@
-
 # %%
 import re
 from label_analysis.helpers import get_labels, relabel
@@ -40,12 +39,11 @@ class TotalSegmenterLabels():
                 remapping[l]=lout
         return remapping
 
-
-
     @property
     def all(self):return self.df.label.to_list()
 
-
+    @property
+    def labelshort(self):return self.df.label_short.to_list()
 # %%
 
 if __name__ == "__main__":

@@ -406,12 +406,12 @@ if __name__ == "__main__":
 #SECTION:-------------------- SETUP--------------------------------------------------------------------------------------
 
     preds_fldr_lidc2 = Path("/s/fran_storage/predictions/lidc2/LITS-913")
-    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933")
+    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-1018")
     nnunet_fldr = Path("/s/datasets_bkp/ark/")
 
 # %%
 
-    fixed_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc")
+    fixed_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-1018_fixed_mc")
     fixed_fns = list(fixed_fldr.glob("*"))
     lm_fns = list(preds_fldr.glob("crc*"))
     pending = [find_matching_fn(fn,fixed_fns) is None for fn in lm_fns]
@@ -428,7 +428,7 @@ if __name__ == "__main__":
 #SECTION:-------------------- Fix touching labels (e.g., cyst and cancer in single lesion)--------------------------------------------------------------------------------------
 
     Merger = MergeTouchingLabelsFiles(ignore_labels=[1])
-    Merger.process_batch(lm_fns=lm_fns_pending,overwrite=overwrite)
+    Merger.process_batch(lm_fns=lm_fns,overwrite=overwrite)
 # %%
 #SECTION:-------------------- MORE--------------------------------------------------------------------------------------
 

@@ -194,8 +194,12 @@ class ScorerLabelMaps:
 
     def dust(self):
         # predicted labels <threshold max_dia will be erased
+        print("Dusting GT")
         self.LG.dust(self.dusting_threshold)  # sanity check
+        print("-"*20)
+        print("Dusting Pred")
         self.LP.dust(self.dusting_threshold)
+        print("-"*20)
 
         self.labs_pred = self.LP.labels
         self.labs_gt = self.LG.labels
@@ -402,20 +406,19 @@ class ScorerFiles(ScorerLabelMaps):
         store_attr(but="case_id")
 
     def process(self, debug=False):
-        # try:
-        print("Processing {}".format(self.case_id))
-        self.dust()
-        self.compute_overlap_overall()
-        if self.empty_lm == "neither":
-            self.compute_overlap_perlesion()
-            self.make_one_to_one_dsc()
-        self.gt_radiomics(debug)
-        self.cont_tables()
-        return self.create_df_full()
+        try:
+            print("Processing {}".format(self.case_id))
+            self.dust()
+            self.compute_overlap_overall()
+            if self.empty_lm == "neither":
+                self.compute_overlap_perlesion()
+                self.make_one_to_one_dsc()
+            self.gt_radiomics(debug)
+            self.cont_tables()
+            return self.create_df_full()
 
-    # except:
-    #     tr()
-    # logging.error("Error processing {}".format(self.gt_fn))
+        except:
+            logging.error("Error processing {}".format(self.gt_fn))
 
     def make_one_to_one_dsc(self):
         dsc_cp = self.dsc.copy()
@@ -588,9 +591,9 @@ class ScorerAdvanced(ScorerFiles):
             if hasattr(ind, "item"):
                 ind = ind.item()
             if dsc_axis == 0:
-                gp = np.nonzero(S.dsc[ind, :])
+                gp = np.nonzero(self.dsc[ind, :])
             else:
-                gp = np.nonzero(S.dsc[:, ind])
+                gp = np.nonzero(self.dsc[:, ind])
             gp = set(gp[0])
             dsc_gps.append(gp)
         return dsc_gps
@@ -601,10 +604,10 @@ class ScorerAdvanced(ScorerFiles):
             lab = re.findall(r"\d+", c)[0]
             lab = int(lab)
             if "gt" in c:
-                inx = key_from_value(S.LG_ind_cc_pairing, lab)[0]
+                inx = key_from_value(self.LG_ind_cc_pairing, lab)[0]
                 row = inx
             else:
-                inx = key_from_value(S.LP_ind_cc_pairing, lab)[0]
+                inx = key_from_value(self.LP_ind_cc_pairing, lab)[0]
                 col = inx
         dsc = self.dsc[row, col]
         return dsc
@@ -628,7 +631,6 @@ class ScorerAdvanced(ScorerFiles):
         return d
 
     def recompute_overlap_perlesion(self):
-
         r = self.dsc.shape[0]
         s = self.dsc.shape[1]
         gt_labs = self.LG.nbrhoods["label_cc"].tolist()
@@ -648,8 +650,6 @@ class ScorerAdvanced(ScorerFiles):
                 edge_sets.extend(gt_ind_2_preds)
             else:
                 pass # This index LG has no overlapping pred
-
-
         G.add_edges_from(edge_sets)
         con = nx.connected_components(G)
         ccs = list(con)
@@ -702,14 +702,16 @@ class ScorerAdvanced(ScorerFiles):
         self.df2.loc[self.df2["fk"].isin(redsc_labels), "dsc"] = self.dsc_multi
 
     def insert_fks(self, nbrhoods, label_key):
-        colnames = ["label", "cent", "length", "volume", "label_cc"]
+
+        colnames = ["label", "cent", "length", "volume", "label_cc", "fk"]
         dfs = []
         for i in range(len(self.df2)):
             cluster = self.df2.iloc[i]
             labels = cluster[label_key]
             fk = cluster["fk"]
-            row = nbrhoods.loc[nbrhoods["label_cc"].isin(cluster[label_key])]
+            row = nbrhoods.loc[nbrhoods["label_cc"].isin(labels)]
             # if len(labels)>1:
+            #     tr()
             #     label_dom = [row['label'].max()]
             #     cent = [row['cent'].tolist()[0]]
             #     length = [row['length'].sum()]
@@ -721,14 +723,19 @@ class ScorerAdvanced(ScorerFiles):
             df_mini = row[colnames]
             df_mini = df_mini.assign(fk=fk)
             dfs.append(df_mini)
-        df_final = pd.concat(dfs, axis=0)
-        return df_final
+        df_matched = pd.concat(dfs, axis=0)
+        matched_labels = set(df_matched['label_cc'].tolist())
+        unmatched_labels = set(nbrhoods['label_cc'].tolist()) - matched_labels
+        df_unmatched =nbrhoods.loc[nbrhoods['label_cc'].isin(unmatched_labels), colnames]
+        df_output=pd.concat([df_matched,df_unmatched],axis = 0)
+        return df_output
 
     def insert_dsc_fks(self):
         self.LG.nbrhoods["dsc"] = float("nan")
+        self.LG.nbrhoods["fk"] = -1
+        self.LP.nbrhoods["fk"] = -2
         if self.empty_lm != "neither":
-            self.LG.nbrhoods["fk"] = -1
-            self.LP.nbrhoods["fk"] = -2
+            pass
         else:
             self.LG.nbrhoods = self.insert_fks(self.LG.nbrhoods, "gt_label_cc")
             self.LP.nbrhoods = self.insert_fks(self.LP.nbrhoods, "pred_label_cc")
@@ -900,7 +907,7 @@ class BatchScorer:
     @property
     def output_fn(self):
         maybe_makedirs(self.output_fldr)
-        output_fn = self.output_fldr.name + "_thresh{0}mm_results.xlsx".format(
+        output_fn = self.output_fldr.name + "_thresh{0}mm.xlsx".format(
             self.dusting_threshold
         )
         output_fn = self.output_fldr / output_fn
@@ -944,7 +951,8 @@ class BatchScorer2(BatchScorer):
 
     def store_tmp_df(self):
         dfs_tmp = pd.concat(self.dfs)
-        dfs_tmp.to_csv(self.output_fldr / "tmp{}.csv".format(self.output_suffix))
+        # dfs_tmp.to_csv(self.output_fldr / "tmp{}.csv".format(self.output_suffix))
+        dfs_tmp.to_csv(self.output_fn)
 
     @property
     def output_fn(self):
@@ -1018,18 +1026,33 @@ if __name__ == "__main__":
 # %%
 # SECTION:-------------------- SETUP--------------------------------------------------------------------------------------
     preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc")
+    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-1018_fixed_mc")
+    res_fldr = preds_fldr / "results"
+    fns =list(res_fldr.glob("*csv"))
+
+
+# %%
+    dfs=[]
+    for fn in fns:
+        df = pd.read_csv(fn)
+        dfs.append(df)
+    partial_df = None
+
+    partial_df = pd.concat(dfs)
+# %%
+    # maybe_makedirs(preds_fldr/("results"))
+# %%
     preds_nnunet_fldr = Path("/s/datasets_bkp/ark/")
     gt_fldr = Path("/s/xnat_shadow/crc/lms")
     gt_fns = list(gt_fldr.glob("*"))
     gt_fns = [fn for fn in gt_fns if is_sitk_file(fn)]
 
-    ub_df_fn = "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/results/results_thresh1mm.xlsx"
+    # ub_df_fn = "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/results/results_thresh1mm.xlsx"
+    # results_df = pd.read_excel(ub_df_fn)
+    # partial_df = results_df
     imgs_fldr = Path("/s/xnat_shadow/crc/completed/images")
 
-    results_df = pd.read_excel(ub_df_fn)
 
-    partial_df = None
-    partial_df = results_df
 # %%
 # SECTION:-------------------- Batchscorer Ray--------------------------------------------------------------------------------------
 
@@ -1038,52 +1061,28 @@ if __name__ == "__main__":
     fpl = int(len(gt_fns) / n_lists)
     inds = [[fpl * x, fpl * (x + 1)] for x in range(n_lists - 1)]
     inds.append([fpl * (n_lists - 1), None])
-    chunks = list(il.starmap(slice_list, zip([gt_fns] * n_lists, inds)))
+    chunksi = list(il.starmap(slice_list, zip([gt_fns] * n_lists, inds)))
     dusting_threshold=0
+    df_fn =  Path("/s/fran_storage/predictions/litsmc/LITS-1018_fixed_mc/results/results_thresh{}mm.xlsx".format(dusting_threshold))
 
-    args_nnunet = [
-        [
-            chunk,
-            preds_nnunet_fldr,
-            [1],
-            [1],
-            None,
-            partial_df,
-            [],
-            None,
-            False,
-            dusting_threshold,
-            False,
-        ]
-        for chunk in chunks
-    ]
 # %%
     
     args = [
         [chunk, preds_fldr, [1], [1], None, partial_df, [], None, False, dusting_threshold, False]
-        for chunk in chunks
+        for chunk in chunksi
     ]
 
 
-# %%
-
     actors = [BatchScorerRay.remote(id) for id in range(n_lists)]
 # %%
-    results_nnunet = ray.get(
-        [c.process.remote(*a) for c, a in zip(actors, args_nnunet)]
-    )
-    df_nnunet = pd.concat(results_nnunet)
-    df_fn_nnunet = preds_nnunet_fldr / ("results/results.xlsx")
-    df_nnunet.to_excel(df_fn_nnunet, index=False)
-# %%
     results = ray.get([c.process.remote(*a) for c, a in zip(actors, args)])
-# %%
     df = pd.concat(results)
-    df.to_excel(ub_df_fn, index=False)
+    df.to_excel(df_fn, index=False)
 # %%
     df = pd.read_excel(ub_df_fn)
     bb = set(df.case_id)
     bb.difference(aa)
+# %%
 # %%
 # SECTION:-------------------- Batchscorer single --------------------------------------------------------------------------------------
 
@@ -1128,26 +1127,30 @@ if __name__ == "__main__":
 # %%
 # SECTION:-------------------- FILE SCOorer (ScorerAdvanced)--------------------------------------------------------------------------------------
 
-    cid = "crc_CRC211"
+    cid = "crc_CRC278"
 
-    gt_fn = [fn for fn in gt_fns if cid in fn.name][0]
+    gt_fn = [fn for fn in gt_fns if cid in fn.name][1]
     pred_ub = find_matching_fn(gt_fn, preds_fldr, True)
 
+# %%
     S = ScorerAdvanced(
         gt_fn, pred_ub, ignore_labels_gt=[], ignore_labels_pred=[1]
     )
 # %%
-# %%
     df = S.process()
-    df.to_csv("crc211.csv")
+    df.to_csv("crc278.csv")
     sitk.WriteImage(S.LP.lm_cc,"pred_cc.nii.gz")
     sitk.WriteImage(S.LG.lm_cc,"gt_cc.nii.gz")
 # %%
+    LG = LabelMapGeometry(gt_fn)
+    LG.dust(0)
+
+    LG.nbrhoods
 # %%
 #SECTION:-------------------- SCORER SLICEROUTPUT--------------------------------------------------------------------------------------
 
-    # gt_fn2 = "/home/ub/code/label_analysis/gt_cc_slicer.nrrd"
     # pred_fn2= "/home/ub/code/label_analysis/pred_cc_slicer.nrrd"
+    # gt_fn2 = "/home/ub/code/label_analysis/gt_cc_slicer.nrrd"
     #
     # S = ScorerAdvanced(
     #     gt_fn2, pred_fn2, ignore_labels_gt=[], ignore_labels_pred=[]
@@ -1162,15 +1165,16 @@ if __name__ == "__main__":
     sitk.WriteImage(S.LP.lm_cc,"pred_cc.nii.gz")
     sitk.WriteImage(S.LG.lm_cc,"gt_cc.nii.gz")
 
-# SECTION:-------------------- START HERE fk 11 has two gt_label_cc--------------------------------------------------------------------------------------
-
+# SECTION:-------------------- TROUBLESHOOTING-------------------------------------------------------------------------------------
+# %%
     fn1 = "/home/ub/code/label_analysis/pred_19.nrrd"
     fn2 = "/home/ub/code/label_analysis/gt_22.nrrd"
+    gt_fn = "/s/xnat_shadow/crc/lms/crc_CRC019_20190617_ABDOMEN.nii.gz"
+    pred_fn = "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/crc_CRC019_20190617_ABDOMEN.nii.gz"
     S = ScorerAdvanced(
-        fn1, fn2, ignore_labels_gt=[], ignore_labels_pred=[], case_id="test"
+        gt_fn, pred_fn, ignore_labels_gt=[], ignore_labels_pred=[], case_id="test"
     )
-# %%
-    # df1 = S.process()
+    df = S.process()
     # S = ScorerAdvanced(gt_fn, pred_ub,ignore_labels_gt=[1],ignore_labels_pred=[1])
     # df = S.process()
 
@@ -1181,77 +1185,42 @@ if __name__ == "__main__":
     S.dust()
     S.compute_overlap_overall()
 # %%
+    sitk.WriteImage(S.LP.lm_cc,"pred_cc.nii.gz")
+    sitk.WriteImage(S.LG.lm_cc,"_cc.nii.gz")
+# %%
     if S.empty_lm == "neither":
         S.compute_overlap_perlesion()
         S.recompute_overlap_perlesion()
     S.gt_radiomics(deb)
 # %%
+
+    nbrhoods = S.LG.nbrhoods.copy()
+    label_key="gt_label_cc"
+    colnames = ["label", "cent", "length", "volume", "label_cc"]
+    dfs = []
+    for i in range(len(S.df2)):
+        cluster = S.df2.iloc[i]
+        labels = cluster[label_key]
+        fk = cluster["fk"]
+        row = nbrhoods.loc[nbrhoods["label_cc"].isin(cluster[label_key])]
+        # if len(labels)>1:
+        #     label_dom = [row['label'].max()]
+        #     cent = [row['cent'].tolist()[0]]
+        #     length = [row['length'].sum()]
+        #     volume = [row['volume'].sum()]
+        #     df_dict = {'label':label_dom, 'cent':cent,'length':length, 'volume':volume,'label_cc':fk ,'fk':fk}
+        #     df_mini = pd.DataFrame(df_dict)
+        #     dfs.append(df_mini)
+        # elif len(labels)==1:
+        df_mini = row[colnames]
+        df_mini = df_mini.assign(fk=fk)
+        dfs.append(df_mini)
+    df_fks = pd.concat(dfs, axis=0)
+# %%
     S.insert_dsc_fks()
     df_f = S.create_df_full()
 # %%
-    r = S.dsc.shape[0]
-    s = S.dsc.shape[1]
-    gt_labs = S.LG.nbrhoods["label_cc"].tolist()
-    gt_labs = "gt_lab_"+ S.LG.nbrhoods["label_cc"].astype(str)
-    gt_labs = []
-    pred_labs ="pred_lab_"+  S.LP.nbrhoods["label_cc"].astype(str)
-    G = nx.Graph()
-    G.add_nodes_from(gt_labs, bpartite=0)
-    G.add_nodes_from(pred_labs, bpartite=1)
-    edge_sets = []
-    for row in range(r):
-        if row in S.LG_ind_cc_pairing.keys():
-            gt_lab = "gt_lab_"+str(S.LG_ind_cc_pairing[row])
-            edges = np.argwhere(S.dsc[row, :]).flatten().tolist()
-            pred_labs= ["pred_lab_" + str(S.LP_ind_cc_pairing[ind]) for ind in edges]
-            gt_ind_2_preds = [(gt_lab, pred_lab) for pred_lab in pred_labs]
-            edge_sets.extend(gt_ind_2_preds)
-        else:
-            pass # This index LG has no overlapping pred
 
-
-    G.add_edges_from(edge_sets)
-    con = nx.connected_components(G)
-    ccs = list(con)
-
-    fk_gen = fk_generator(start=1)
-    gt_remaps = {}
-    pred_remaps = {}
-    fks = []
-    S.df2 = []
-    for cc in ccs:
-        fk = next(fk_gen)
-        fks.append(fk)
-        dici = {"fk": fk}
-        gt_labels = []
-        pred_labels = []
-        recompute_dsc = False
-        dsc = float("nan")
-        if len(cc) > 2:
-            recompute_dsc = True
-        elif len(cc) == 2:
-            dsc = S.dsc_from_cc_pair(cc)
-        while cc:
-            label = cc.pop()
-            indx = re.findall(r"\d+", label)[0]
-            indx = int(indx)
-            if "gt" in label:
-                gt_labels.append(indx)
-                gt_remaps.update({indx: fk})
-            else:
-                pred_labels.append(indx)
-                pred_remaps.update({indx: fk})
-        labels = {
-            "pred_label_cc": pred_labels,
-            "gt_label_cc": gt_labels,
-            "recompute_dsc": recompute_dsc,
-            "dsc": dsc,
-        }
-        dici.update(labels)
-        S.df2.append(dici)
-
-
- 
 # %%
     prox_labels, prox_inds = S.get_neighbr_labels()
     S.LG_ind_cc_pairing = {a[0]: b[0] for a, b in zip(prox_inds, prox_labels)}
@@ -1277,9 +1246,10 @@ if __name__ == "__main__":
 # %%
     #
     S.LG.nbrhoods["dsc"] = float("nan")
+    S.LG.nbrhoods["fk"] = -1
+    S.LP.nbrhoods["fk"] = -2
     if S.empty_lm != "neither":
-        S.LG.nbrhoods["fk"] = -1
-        S.LP.nbrhoods["fk"] = -2
+        pass
     else:
         S.LG.nbrhoods = S.insert_fks(S.LG.nbrhoods, "gt_label_cc")
         S.LP.nbrhoods = S.insert_fks(S.LP.nbrhoods, "pred_label_cc")
@@ -1293,31 +1263,32 @@ if __name__ == "__main__":
     nbrhoods = S.LG.nbrhoods.copy()
     label_key = "gt_label_cc"
 
-    colnames = ["label", "cent", "length", "volume", "label_cc"]
-    dfs = []
-    for i in range(len(S.df2)):
-        cluster = S.df2.iloc[i]
-        labels = cluster[label_key]
-        fk = cluster["fk"]
-        row = nbrhoods.loc[nbrhoods["label_cc"].isin(cluster[label_key])]
-        # if len(labels)>1:
-        #     tr()
-        #     label_dom = [row['label'].max()]
-        #     cent = [row['cent'].tolist()[0]]
-        #     length = [row['length'].sum()]
-        #     volume = [row['volume'].sum()]
-        #     df_dict = {'label':label_dom, 'cent':cent,'length':length, 'volume':volume,'label_cc':fk ,'fk':fk}
-        #     df_mini = pd.DataFrame(df_dict)
-        #     dfs.append(df_mini)
-        # elif len(labels)==1:
-        df_mini = row[colnames]
-        df_mini = df_mini.assign(fk=fk)
-        dfs.append(df_mini)
-
-    df_final = pd.concat(dfs, axis=0)
-
 # %%
-# SECTION:-------------------- ROUGHT--------------------------------------------------------------------------------------
+
+#SECTION:-------------------- BATCH NNUNET--------------------------------------------------------------------------------------
+
+    args_nnunet = [
+        [
+            chunk,
+            preds_nnunet_fldr,
+            [1],
+            [1],
+            None,
+            partial_df,
+            [],
+            None,
+            False,
+            dusting_threshold,
+            False,
+        ]
+        for chunk in chunksi
+    ]
+    results_nnunet = ray.get(
+        [c.process.remote(*a) for c, a in zip(actors, args_nnunet)]
+    )
+    df_nnunet = pd.concat(results_nnunet)
+    df_fn_nnunet = preds_nnunet_fldr / ("results/results.xlsx")
+    df_nnunet.to_excel(df_fn_nnunet, index=False)
 
 # %%
 
