@@ -13,10 +13,10 @@ from label_analysis.helpers import (astype, get_labels, remove_organ_label,
 from label_analysis.utils import align_sitk_imgs
 from pyxnat.core.resources import shutil
 
-from fran.utils.fileio import load_json, maybe_makedirs
-from fran.utils.helpers import find_matching_fn, pp
-from fran.utils.imageviewers import view_sitk
-from fran.utils.string import info_from_filename, int_to_str, strip_extension
+from utilz.fileio import load_json, maybe_makedirs
+from utilz.helpers import find_matching_fn, pp
+from utilz.imageviewers import view_sitk
+from utilz.string import info_from_filename, int_to_str, strip_extension
 
 tr = ipdb.set_trace
 

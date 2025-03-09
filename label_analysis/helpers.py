@@ -7,8 +7,6 @@ from fastcore.basics import listify
 import ipdb
 import numpy as np
 
-from fran.utils.imageviewers import view_sitk
-
 tr = ipdb.set_trace
 
 def arrayFromVTKMatrix(vmatrix):

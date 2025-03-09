@@ -20,7 +20,7 @@ import SimpleITK as sitk
 from fastcore.basics import GetAttr
 from label_analysis.helpers import *
 
-from fran.utils.helpers import *
+from utilz.helpers import *
 ray.init()
 
 

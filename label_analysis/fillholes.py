@@ -1,10 +1,10 @@
 
 # %%
 import SimpleITK as sitk
-from fran.utils.helpers import multiprocess_multiarg
-from fran.utils.sitk_utils import align_sitk_imgs
+from utilz.helpers import multiprocess_multiarg
+from utilz.sitk_utils import align_sitk_imgs
 from pathlib import Path
-from litq.lesion_stats import get_labels
+from label_analysis.helpers      import get_labels
 
 
 # %%

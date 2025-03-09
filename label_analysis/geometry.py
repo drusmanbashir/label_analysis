@@ -19,10 +19,10 @@ import SimpleITK as sitk
 from fastcore.basics import GetAttr
 from label_analysis.helpers import *
 
-from fran.utils.fileio import maybe_makedirs
-from fran.utils.helpers import *
-from fran.utils.imageviewers import *
-from fran.utils.string import (find_file, info_from_filename, match_filenames,
+from utilz.fileio import maybe_makedirs
+from utilz.helpers import *
+from utilz.imageviewers import *
+from utilz.string import (find_file, info_from_filename, match_filenames,
                                strip_extension, strip_slicer_strings)
 
 np.set_printoptions(linewidth=250)
@@ -233,6 +233,22 @@ if __name__ == "__main__":
     test_lm_fns =  list(test_lms_fldr.glob("*"))
     test_img_fns =  list(test_imgs_fldr.glob("*"))
 # %%
+    lesions_liver_fn = Path("/home/ub/Documents/litq_10_liver_lesions.nrrd")
+    lesions_lung_fn =Path("/home/ub/Documents/litq_10_lung_lesions.nrrd")
+    lungs_fn = Path("/home/ub/Documents/litq_10_lungs.nrrd")
+    liver_fn = Path("/home/ub/Documents/litq_10_liver.nrrd")
+# %%
+    Liv = LabelMapGeometry(liver_fn)
+    LivLesions = LabelMapGeometry(lesions_liver_fn)
+
+    outfldr = Path("/s/insync/startup/screencasts")
+    LivLesions.nbrhoods.to_csv(outfldr/("liverlesions.csv"))
+
+# %%
+    Lungs = LabelMapGeometry(lungs_fn)
+    LungLesions = LabelMapGeometry(lesions_lung_fn)
+    LungLesions.nbrhoods.to_csv(outfldr/("lunglesions.csv"))
+    Lungs.nbrhoods.to_csv(outfldr/"lungs.csv")
 #SECTION:-------------------- RADIOMICS--------------------------------------------------------------------------------------
 
 # %%

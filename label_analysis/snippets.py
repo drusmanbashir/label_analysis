@@ -1,15 +1,15 @@
 # %%
 from label_analysis.radiomics import *
 import SimpleITK as sitk
-from fran.utils.helpers import chunks, find_matching_fn, info_from_filename, multiprocess_multiarg
+from utilz.helpers import chunks, find_matching_fn, info_from_filename, multiprocess_multiarg
 from label_analysis.helpers import get_labels, relabel, remove_organ_label, to_cc
 from label_analysis.overlap import LabelMapGeometry
 from pathlib import Path
 import pandas as pd
 
 import sys
-from fran.utils.imageviewers import view_sitk, ImageMaskViewer
-from fran.utils.string import find_file
+from utilz.imageviewers import view_sitk, ImageMaskViewer
+from utilz.string import find_file
 
 from label_analysis.radiomics import radiomics_multiprocess
 sys.path+=["/home/ub/code"]

@@ -14,9 +14,9 @@ from label_analysis.helpers import *
 from label_analysis.overlap import (LabelMapGeometry, get_1lbl_nbrhoods,
                                     labels_overlap )
 
-from fran.utils.fileio import is_filename, maybe_makedirs
-from fran.utils.helpers import *
-from fran.utils.imageviewers import *
+from utilz.fileio import is_filename, maybe_makedirs
+from utilz.helpers import *
+from utilz.imageviewers import *
 #
 # def fixed_output_folder(lm_fn):
 #             lm_fn = Path(lm_fn)

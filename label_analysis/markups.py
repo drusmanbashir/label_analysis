@@ -5,9 +5,9 @@ from fastcore.basics import store_attr
 from label_analysis.helpers import get_labels, relabel, single_label, to_cc
 from label_analysis.geometry import LabelMapGeometry
 import SimpleITK as sitk
-from fran.utils.fileio import load_dict, load_json, maybe_makedirs, save_json
-from fran.utils.imageviewers import view_sitk
-from fran.utils.string import find_file, info_from_filename, replace_extension, strip_extension
+from utilz.fileio import load_dict, load_json, maybe_makedirs, save_json
+from utilz.imageviewers import view_sitk
+from utilz.string import find_file, info_from_filename, replace_extension, strip_extension
 tmplt_folder = Path("/home/ub/code/label_analysis/label_analysis/markup_templates/")
 
 

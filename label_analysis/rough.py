@@ -8,7 +8,7 @@ from label_analysis.geometry import LabelMapGeometry
 from label_analysis.helpers import get_labels, inds_to_labels, relabel, to_cc
 import itertools as il
 import networkx as nx
-from fran.utils.string import find_file
+from utilz.string import find_file
 from scipy.sparse import csr, csr_matrix 
 import SimpleITK as sitk
 

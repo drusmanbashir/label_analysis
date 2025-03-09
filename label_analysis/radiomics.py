@@ -17,10 +17,10 @@ import SimpleITK as sitk
 from fastcore.basics import GetAttr, store_attr
 from label_analysis.helpers import *
 
-from fran.utils.fileio import maybe_makedirs
-from fran.utils.helpers import *
-from fran.utils.imageviewers import *
-from fran.utils.string import (
+from utilz.fileio import maybe_makedirs
+from utilz.helpers import *
+from utilz.imageviewers import *
+from utilz.string import (
     find_file,
     info_from_filename,
     match_filenames,
