@@ -12,4 +12,4 @@ scipy>=1.15.2
 SimpleITK>=2.4.1
 torch
 vtk>=9.3.1
-git+https://github.com/drusmanbashir/utilz.git@main#egg=utilz
+utilz @ git+https://github.com/drusmanbashir/utilz.git@main
