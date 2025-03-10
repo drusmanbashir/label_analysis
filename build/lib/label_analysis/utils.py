@@ -13,7 +13,7 @@ import ast
 from fastcore.basics import store_attr
 import numpy as np
 from torch.functional import Tensor
-from fran.inference.helpers import get_sitk_target_size_from_spacings
+from utilz.itk_sitk import get_sitk_target_size_from_spacings
 from utilz.imageviewers import ImageMaskViewer
 from utilz.fileio import maybe_makedirs, str_to_path
 
