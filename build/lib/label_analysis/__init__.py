@@ -1,0 +1,1 @@
+from .totalseg import TotalSegmenterLabels
