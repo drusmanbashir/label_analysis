@@ -1,5 +1,6 @@
 fastcore
-/home/ub/programs/pyradiomics
+# /home/ub/programs/pyradiomics
+pyradiomics
 ipdb>=0.13.13
 matplotlib>=3.10.1
 networkx>=3.3
