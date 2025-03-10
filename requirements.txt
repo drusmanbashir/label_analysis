@@ -1,5 +1,4 @@
 fastcore
-# /home/ub/programs/pyradiomics
 pyradiomics
 ipdb>=0.13.13
 matplotlib>=3.10.1
@@ -14,3 +13,4 @@ SimpleITK>=2.4.1
 torch
 vtk>=9.3.1
 utilz @ git+https://github.com/drusmanbashir/utilz.git@main
+# /home/ub/programs/pyradiomics

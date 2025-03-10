@@ -1,10 +1,7 @@
 # %%
 import sys
-from functools import reduce
 from radiomics import featureextractor
 
-from batchgenerators.utilities.file_and_folder_operations import maybe_mkdir_p
-import networkx as nx
 import ray
 
 sys.path += ["/home/ub/code"]
