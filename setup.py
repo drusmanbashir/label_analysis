@@ -10,9 +10,6 @@ setup(
     packages=find_packages(),
     install_requires=[
     ],
-    dependency_links=[
-        "git+https://github.com/yourusername/utilz.git@main#egg=utilz",
-    ],
     classifiers=[
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
