@@ -1,10 +1,6 @@
 # %%
 import sys
-from functools import reduce
 from radiomics import featureextractor
-
-import ray
-
 sys.path += ["/home/ub/code"]
 import itertools as il
 from pathlib import Path
