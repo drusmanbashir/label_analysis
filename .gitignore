@@ -17,3 +17,5 @@ __pycache__/
 !testfiles/gt.nii.gz
 !testfiles/pred.nii.gz
 *.egg-info
+build/
+dist/
