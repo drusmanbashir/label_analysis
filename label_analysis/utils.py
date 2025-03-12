@@ -18,6 +18,7 @@ from utilz.fileio import maybe_makedirs, str_to_path
 
 import SimpleITK as sitk
 from utilz.helpers import abs_list
+from utilz.itk_sitk import get_sitk_target_size_from_spacings
 from utilz.string import get_extension
 import ipdb
 
