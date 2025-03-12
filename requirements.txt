@@ -1,5 +1,5 @@
 utilz @ git+https://github.com/drusmanbashir/utilz.git@main
-pyradiomics
+pyradiomics @ git+https://github.com/drusmanbashir/pyradiomics.git
 networkx>=3.3
 scipy>=1.15.2
 vtk>=9.3.1
