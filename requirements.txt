@@ -1,8 +1,6 @@
 utilz @ git+https://github.com/drusmanbashir/utilz.git@main
 pyradiomics
 networkx>=3.3
-pytest>=8.3.3
-pyxnat>=1.6.2
 scipy>=1.15.2
 vtk>=9.3.1
 # /home/ub/programs/pyradiomics

@@ -11,7 +11,7 @@ from fastcore.basics import store_attr
 from label_analysis.helpers import (astype, get_labels, remove_organ_label,
                                    single_label, to_cc, to_int)
 from label_analysis.utils import align_sitk_imgs
-from pyxnat.core.resources import shutil
+import shutil
 
 from utilz.fileio import load_json, maybe_makedirs
 from utilz.helpers import find_matching_fn, pp
