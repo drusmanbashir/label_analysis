@@ -1320,51 +1320,6 @@ if __name__ == "__main__":
             L = LabelMapGeometry(lm)
             cents = missed["gt_cent"].tolist()
             excluded = L.nbrhoods[L.nbrhoods["length"] > 10]
-            excluded = excluded["label_cc"].tolist()
-            cents = [ast.literal_eval(c) for c in cents]
-            remaps = {x: 0 for x in excluded}
-            L.lm_cc = relabel(L.lm_cc, remaps)
-
-            missed_nbr = L.nbrhoods[L.nbrhoods["cent"].isin(cents)]
-            missed_labs = missed_nbr["label_cc"].tolist()
-            other_labs = L.nbrhoods[~L.nbrhoods["label_cc"].isin(missed_labs)]
-            other_labs = other_labs["label_cc"].tolist()
-            remapping_missed = {x: 0 for x in other_labs}
-            remapping_detected = {x: 0 for x in missed_labs}
-# %%
-            lm_missed = relabel(L.lm_cc, remapping_missed)
-
-            sitk.WriteImage(lm_missed, str(out_fldr_missed / lm_fn.name))
-
-            lm_missed_binary = to_binary(lm_missed)
-            sitk.WriteImage(lm_missed_binary, str(out_fldr_missed_binary / lm_fn.name))
-            lm_detected = relabel(L.lm_cc, remapping_detected)
-            sitk.WriteImage(lm_detected, str(out_fldr_detected / lm_fn.name))
-            lm_detected_binary = to_binary(lm_detected)
-            sitk.WriteImage(
-                lm_detected_binary, str(out_fldr_detected_binary / lm_fn.name)
-            )
-# %%
-
-    view_sitk(L.lm_cc, L.lm_cc)
-
-    gt_fns.sort(key=os.path.getmtime, reverse=True)
-    files_pending = [fn for fn in gt_fns if test_modified(fn, 5) == True]
-    cids = [info_from_filename(fn.name)["case_id"] for fn in files_pending]
-    cids = ["crc_" + cid for cid in cids]
-
-    done = results_df.loc[~results_df["case_id"].isin(cids)]
-    # partial_df = results_df.loc[done]
-    partial_df = None
-    partial_df = done
-    # fns_pending = [fn for fn in gt_fns if info_from_filename(fn.name)['case_id'] not in cid_done]
-    # cid_done = set(partial_df['case_id'].values)
-    # crc1 = "CRC003"
-    # crc2 = "CRC275"
-    # gt_fns2 = [find_file(crc1,gt_fns), find_file(crc2,gt_fns)]
-
-
-# %%
-# %%
+            excluded = e
 # %%
 # %%

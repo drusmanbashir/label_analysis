@@ -24,7 +24,7 @@ import ipdb
 
 from utilz.string import cleanup_fname
 tr = ipdb.set_trace
-from fastcore.transform import Transform, ItemTransform
+from fasttransform import Transform, ItemTransform
 import itertools
 
 
