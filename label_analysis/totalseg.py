@@ -132,14 +132,14 @@ class TotalSegmenterLabels:
         """
         return self.df.label.to_list()
 
-    @property
-    def label_short(self):
-        """
-        List[str]: Retrieve shortened label names.
-
-        Returns a list of short descriptive names for each label in the dataset.
-        """
-        return self.df.label_short.to_list()
+    # @property
+    # def label_short(self):
+    #     """
+    #     List[str]: Retrieve shortened label names.
+    #
+    #     Returns a list of short descriptive names for each label in the dataset.
+    #     """
+    #     return self.df.label_short.to_list()
     @property
     def label_localiser(self):
         return self.df.label_localiser.to_list()
