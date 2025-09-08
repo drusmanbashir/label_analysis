@@ -94,7 +94,8 @@ class TotalSegmenterLabels:
             labs_out = labs['label_localiser'].to_list()
         return labs_out
 
-    def create_remapping(self, labelsets, labels_out,localiser=False):
+    #CODE: This takes an overcomplicated list of lists. Simplify this structure, see if you can trial it in mix datasets  (see #1)
+    def create_remapping(self, labelsets, labels_out,localiser=False) -> dict:
         """
         Create a remapping dictionary to map specified labels to new values, mapping others to zero.
 
@@ -111,6 +112,8 @@ class TotalSegmenterLabels:
         Example:
             imported_labelsets = [TSL.labels("all")]
             remapping = TSL.create_remapping(imported_labelsets, [9,]*len(imported_labelsets))
+
+            remapping = TSL.create_remapping([TSL.all],[TSL.label_minimal])
         """
         assert len(labelsets) == len(labels_out), "Make sure the labelsets and labels_out have the same length"
         if localiser==True:
@@ -122,6 +125,20 @@ class TotalSegmenterLabels:
             for l in lset:
                 remapping[l] = lout
         return remapping
+
+
+    def create_remapping    (self,src_labels,dest_labels, as_dict=False,as_list=False):
+        assert as_list or as_dict, "Either list mode or dict mode should be true"
+        src_labels = getattr(self,src_labels)
+        dest_labels = getattr(self,dest_labels)
+        if src_labels == dest_labels:
+            return None
+        if as_dict == True:
+            remapping = {s: d for s, d in zip(src_labels, dest_labels)}
+            return remapping
+        elif as_list == True:
+            return [src_labels,dest_labels]
+
 
     @property
     def all(self):
@@ -143,6 +160,20 @@ class TotalSegmenterLabels:
     @property
     def label_localiser(self):
         return self.df.label_localiser.to_list()
+
+    @property
+    def lungs(self):
+        lungs = self.df["structure_short"].isin(["lung"])
+        labels = self.df.loc[lungs,'label_localiser'].unique().tolist()
+        return labels
+
+    @property
+    def lung(self):
+        return self.lungs
+
+    @property 
+    def label_minimal(self):
+        return self.df.label_minimal.to_list()
 
 # %%
 

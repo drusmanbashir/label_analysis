@@ -180,7 +180,7 @@ def remove_labels(lm, labels):
 
 
 
-def relabel(lm,remapping:dict):
+def relabel(lm,remapping:dict) -> sitk.Image:
         org_type = lm.GetPixelID()
         lm_cc= to_label(lm)
         lm_cc = sitk.ChangeLabelLabelMap(lm_cc,remapping)
