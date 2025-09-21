@@ -6,6 +6,8 @@ from label_analysis.overlap import fk_generator
 import pandas as pd
 from pathlib import Path
 import SimpleITK as sitk
+from fran.data.dataregistry import DS
+
 #
 #
 #
@@ -62,7 +64,8 @@ class TotalSegmenterLabels:
         Initializes TotalSegmenterLabels by loading label data from a default Excel file.
         Loads label information into dataframes
         """
-        meta_fn = Path("/s/datasets_bkp/totalseg/meta.xlsx")
+        totalseg_folder = DS['totalseg_meta'].folder
+        meta_fn = totalseg_folder / "meta.xlsx"
         self.df = pd.read_excel(meta_fn, sheet_name="labels")
         self.meta = pd.read_excel(meta_fn, sheet_name="meta")
 
@@ -94,50 +97,29 @@ class TotalSegmenterLabels:
             labs_out = labs['label_localiser'].to_list()
         return labs_out
 
-    #CODE: This takes an overcomplicated list of lists. Simplify this structure, see if you can trial it in mix datasets  (see #1)
-    def create_remapping(self, labelsets, labels_out,localiser=False) -> dict:
-        """
-        Create a remapping dictionary to map specified labels to new values, mapping others to zero.
-
-        Parameters:
-        labelsets (List[List[int]]): A list of lists, where each sublist contains label IDs to remap.
-        labels_out (List[int]): A list of new label values corresponding to each set in labelsets. 
-        if len(labelsets) is 2, labels_out will be a list of size 2 regardless of size of sublists inside labelsets
-
-        Returns:
-        Dict[int, int]: A dictionary mapping from old labels to new labels.
-
-        Raises:
-        AssertionError: If labelsets and labels_out lengths do not match.
-        Example:
-            imported_labelsets = [TSL.labels("all")]
-            remapping = TSL.create_remapping(imported_labelsets, [9,]*len(imported_labelsets))
-
-            remapping = TSL.create_remapping([TSL.all],[TSL.label_minimal])
-        """
-        assert len(labelsets) == len(labels_out), "Make sure the labelsets and labels_out have the same length"
-        if localiser==True:
-
-            remapping = {l: 0 for l in self.label_localiser}
-        else:
-            remapping = {l: 0 for l in self.all}
-        for lset, lout in zip(labelsets, labels_out):
-            for l in lset:
-                remapping[l] = lout
-        return remapping
-
-
-    def create_remapping    (self,src_labels,dest_labels, as_dict=False,as_list=False):
+    def create_remapping(self,src_labels,dest_labels, as_dict=False,as_list=False):
         assert as_list or as_dict, "Either list mode or dict mode should be true"
-        src_labels = getattr(self,src_labels)
-        dest_labels = getattr(self,dest_labels)
-        if src_labels == dest_labels:
-            return None
+        if src_labels in ["all","label_localiser"] and dest_labels in ["all","label_localiser"]:
+            src_labels = getattr(self,src_labels)
+            dest_labels = getattr(self,dest_labels)
+            pairs = set(zip(src_labels,dest_labels))
+        elif src_labels == "label_localiser":
+            dest_labels = getattr(self,dest_labels)
+            neo = self.df["label_localiser"].where(self.df["label_localiser"].isin(dest_labels),0)
+            dest_labels = neo.tolist()
+            src_labels = self.df["label_localiser"]
+            src_labels = src_labels.tolist()
+            pairs = set(zip(src_labels,dest_labels))
+        # if src_labels == dest_labels:
+        #     return None
         if as_dict == True:
-            remapping = {s: d for s, d in zip(src_labels, dest_labels)}
+            # remapping = {s: d for s, d in zip(src_labels, dest_labels)}
+            remapping = {s: d for s, d in pairs}
             return remapping
         elif as_list == True:
-            return [src_labels,dest_labels]
+            srcs = [a[0] for a in pairs]
+            dests = [a[1] for a in pairs]
+            return [srcs,dests]
 
 
     @property
@@ -167,10 +149,6 @@ class TotalSegmenterLabels:
         labels = self.df.loc[lungs,'label_localiser'].unique().tolist()
         return labels
 
-    @property
-    def lung(self):
-        return self.lungs
-
     @property 
     def label_minimal(self):
         return self.df.label_minimal.to_list()
@@ -181,6 +159,12 @@ if __name__ == "__main__":
     from fran.managers.project import Project
     P =Project ('tmp')
     TSL = TotalSegmenterLabels()
+    rem = TSL.create_remapping("label_localiser","lungs", as_dict=True)
+
+    labs = TSL.lungs
+    TSL.df["neo"] =  TSL.df["label_localiser"].where(TSL.df["label_localiser"].isin(labs),0)
+    outer = TSL.df["neo"].tolist()
+
 
 # %%
     fn1 = "/s/fran_storage/predictions/totalseg/LITS-827/lidc2_0001.nii.gz"
@@ -190,6 +174,7 @@ if __name__ == "__main__":
     l2 = get_labels(lm2)
 
 # %%
+    mask = TSL.df['structure_short'].where("lungs", 0)
 # %%
 #SECTION:-------------------- CREATING simple labelset--------------------------------------------------------------------------------------
 
@@ -209,6 +194,26 @@ if __name__ == "__main__":
     df_n = Path("/s/datasets_bkp/totalseg/meta_new.csv")
     df.to_csv(df_n)
 # %%
+    as_dict = True
+    src_labels= "label_localiser"
+    dest_labels = "lungs"
+
+    assert as_list or as_dict, "Either list mode or dict mode should be true"
+    if src_labels in ["all","label_localiser"] and dest_labels in ["all","label_localiser"]:
+        src_labels = getattr(TSL,src_labels)
+        dest_labels = getattr(TSL,dest_labels)
+    elif src_labels == "label_localiser":
+        dest_labels = getattr(TSL,dest_labels)
+        neo = TSL.df["label_localiser"].where(TSL.df["label_localiser"].isin(dest_labels),0)
+        dest_labels = neo.tolist()
+        src_labels = TSL.df["label_localiser"]
+    # if src_labels == dest_labels:
+    #     return None
+    if as_dict == True:
+        remapping = {s: d for s, d in zip(src_labels, dest_labels)}
+    elif as_list == True:
+        rem= [src_labels,dest_labels]
+
 # %%
 #SECTION:-------------------- CREATING label_short-------------------------------------------------------------------------------------
     key = fk_generator(1)
