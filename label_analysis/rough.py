@@ -1,4 +1,5 @@
 # %%
+import sys
 import re
 import matplotlib.pyplot as plt
 from networkx.algorithms import bipartite as bp
@@ -11,9 +12,13 @@ import networkx as nx
 from utilz.string import find_file
 from scipy.sparse import csr, csr_matrix 
 import SimpleITK as sitk
-
+sys.path.append("/home/ub/code/slicer_cpp/protot/build/debug/")
+import labelgeom
 # %%
 if __name__ == "__main__":
+
+    rows = labelgeom.geometry_from_file("/s/xnat_shadow/crc/lms/crc_CRC211_20170724_AbdoPelvis1p5.nii.gz")
+    rows
 
     lm_f = "/s/xnat_shadow/crc/lms/crc_CRC211_20170724_AbdoPelvis1p5.nii.gz"
     lm = sitk.ReadImage(lm_f)

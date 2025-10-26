@@ -151,6 +151,7 @@ class MergeTouchingLabels(LabelMapGeometry):
         threshold: 0.1 if the dominant label has less than thresholded volume contribution, it will be ignored and next largest will be selected instead .
         Whenever more than one labels are presented inside a single cc, the dom_label is assigned to all
         '''
+    #HACK:  note these are oriented bounding boxes. Make sure their overlap comes out right
         super().__init__(lm,ignore_labels)
         self.fil.ComputeOrientedBoundingBoxOn()
         self.fil.Execute(self.lm_cc)

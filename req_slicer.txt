@@ -1,0 +1,8 @@
+versioneer>=0.28
+utilz @ git+https://github.com/drusmanbashir/utilz.git@main
+pyradiomics @ git+https://github.com/drusmanbashir/pyradiomics.git
+networkx>=2.8
+fasttransform
+# scipy>=1.15.2
+scipy
+# /home/ub/programs/pyradiomics

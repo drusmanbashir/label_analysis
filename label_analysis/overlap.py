@@ -1,11 +1,7 @@
 # %%
-import os
-import ast
 from utilz.dictopts import key_from_value
 import sys
-import time
 from functools import reduce
-from radiomics import featureextractor
 
 import networkx as nx
 import ray
@@ -18,25 +14,20 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
-from fastcore.basics import GetAttr, store_attr
+from fastcore.basics import store_attr
 from label_analysis.helpers import *
 
-from utilz.fileio import maybe_makedirs
+from utilz.fileio import load_json, maybe_makedirs
 from utilz.helpers import *
 from utilz.imageviewers import *
 from utilz.string import (
-    find_file,
     info_from_filename,
     match_filenames,
-    strip_extension,
-    strip_slicer_strings,
 )
 
 np.set_printoptions(linewidth=250)
 np.set_printoptions(formatter={"float": lambda x: "{0:0.2f}".format(x)})
 
-# %% [markdown]
-## this
 
 
 def fk_generator(start=0):
@@ -546,7 +537,7 @@ class ScorerFiles(ScorerLabelMaps):
             "gt_volume_total",
             "pred_volume_total",
         ]
-        rel_cols = df.columns.intersection(exc_cols)
+        df.columns.intersection(exc_cols)
         drop_inds = []
         for i, row in df.iterrows():
             r2 = row.drop(exc_cols)
@@ -630,7 +621,7 @@ class ScorerAdvanced(ScorerFiles):
 
     def recompute_overlap_perlesion(self):
         r = self.dsc.shape[0]
-        s = self.dsc.shape[1]
+        self.dsc.shape[1]
         gt_labs = self.LG.nbrhoods["label_cc"].tolist()
         gt_labs = "gt_lab_"+ self.LG.nbrhoods["label_cc"].astype(str)
         gt_labs = []
@@ -1028,7 +1019,56 @@ if __name__ == "__main__":
     res_fldr = preds_fldr / "results"
     fns =list(res_fldr.glob("*csv"))
 
+# %%
 
+    lm_fn = "/home/ub/code/label_analysis/label_analysis/files/two_lesions.nrrd"
+    cc_fn  = "/home/ub/code/label_analysis/label_analysis/files/two_lesions_cc.mrk.json"
+    point_fn = "/home/ub/code/label_analysis/label_analysis/files/two_lesions_point.mrk.json"
+    lm = sitk.ReadImage(lm_fn)
+
+    cc = load_json(cc_fn)
+    point = load_json(point_fn)
+    L = LabelMapGeometry(lm)
+    L.nbrhoods 
+    L.fil.ComputeOrientedBoundingBoxOn()
+    L.Execute(L.lm_cc)
+    sitk.WriteImage(L.lm_cc,"/home/ub/code/label_analysis/label_analysis/files/two_lesions_cc.nii")
+# %%
+
+    L.lm_org.GetOrigin()
+    L.lm_org.GetSpacing()
+    L.fil.GetBoundingBox(1)
+
+    print(org1,"\n",bb1)
+    
+    org2 =L.fil.GetOrientedBoundingBoxOrigin(2)
+    bb2 = L.fil.GetOrientedBoundingBoxSize(2)
+    bb2_end = [a+b for a,b in zip(org2,bb2)]
+    # L.fil.GetOrientedBoundingBoxDirection(2)
+
+    print(org2,"\n", bb2,"\n",bb2_end)
+
+
+    print(org1)
+    print(bb1)
+    print(org2)
+    print(bb2)
+# %%
+
+    mup = cc['markups']
+    len(mup)
+    mup[0].keys()
+# %%
+    
+
+# %%
+    lm = to_int(L.lm_cc)
+    L.fil.GetOrientedBoundingBoxDirection(1)
+    L.fil.GetBoundingBox(1)
+    L.fil.Execute(lm)
+    L.fil.GetOrientedBoundingBoxDirection(lm)
+# %%
+    pd.set_option("display.max_colwidth", None)
 # %%
     dfs=[]
     for fn in fns:
