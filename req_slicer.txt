@@ -1,8 +1,16 @@
-versioneer>=0.28
-utilz @ git+https://github.com/drusmanbashir/utilz.git@main
-pyradiomics @ git+https://github.com/drusmanbashir/pyradiomics.git
-networkx>=2.8
-fasttransform
-# scipy>=1.15.2
-scipy
-# /home/ub/programs/pyradiomics
+# Runtime deps for Slicer (Python 3.9). No git deps here.
+itk
+fastcore==1.7.29
+PyYAML==6.0.2
+tqdm==4.66.5
+pandas==2.2.3
+networkx==3.2.1
+pydicom==2.4.4
+nibabel==5.2.1
+scikit-image==0.21.0
+openpyxl==3.1.5
+reportlab==4.2.5
+send2trash==1.8.3
+scipy==1.13.1
+fasttransform==0.0.2
+

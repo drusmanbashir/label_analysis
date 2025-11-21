@@ -7,6 +7,8 @@ from fastcore.basics import listify
 import ipdb
 import numpy as np
 
+from label_analysis.utils import align_sitk_imgs
+
 tr = ipdb.set_trace
 
 def arrayFromVTKMatrix(vmatrix):
@@ -54,6 +56,52 @@ def crop_center( lm, im=None):
             return lm, im
         else:
             return lm
+
+def merge(lm_base, lms_other:Union[sitk.Image,list],labels_lol:list =None):
+
+    #labels_lol:i.e.., list of lists. One set of labels per lm. If not provided, all labels in each lm are used. This is necessary as a uniform template. Some lm may not have full compliment of labels. note lm_base labels are not required
+    # those earlier in order get overwritten by those later. So lesions should be last
+    if not isinstance(lms_other,Union[tuple,list]): lms_other = [lms_other]
+    def _inner(lm2_ar,labels):
+        for label in labels:
+            lm_base_arr[lm2_ar==label]=label
+        return lm_base_arr
+
+
+    lm_base_arr= sitk.GetArrayFromImage(lm_base)
+    lm_arrs =[ sitk.GetArrayFromImage(lm) for lm in lms_other]
+    if labels_lol is None:
+        labels_lol  = [get_labels(lm) for lm in lms_other]
+    lm_final = [_inner(lm_arr,labels) for lm_arr,labels in zip (lm_arrs,labels_lol)][0]
+    lm_final=sitk.GetImageFromArray(lm_final)
+    lm_final= align_sitk_imgs(lm_final,lm_base)
+    return lm_final
+
+
+def merge_pt(lm_base_arr, lm_arrs:Union[sitk.Image,list],labels_lol:list =None):
+
+    #labels_lol:i.e.., list of lists. One set of labels per lm. If not provided, all labels in each lm are used. This is necessary as a uniform template. Some lm may not have full compliment of labels. note lm_base labels are not required
+    # those earlier in order get overwritten by those later. So lesions should be last
+    if not isinstance(lm_arrs,Union[tuple,list]): lm_arrs = [lm_arrs]
+    def _inner(lm2_ar,labels):
+        for label in labels:
+            lm_base_arr[lm2_ar==label]=label
+        return lm_base_arr
+
+    if labels_lol is None:
+        labels_lol  = [lm.unique()[1:] for lm in lm_arrs]
+
+    lm_final = [_inner(lm_arr,labels) for lm_arr,labels in zip (lm_arrs,labels_lol)][0]
+    return lm_final
+
+def merge_lmfiles(lm_base, lms_other:Union[sitk.Image,list],labels_lol:list =None):
+
+    lm_base = sitk.ReadImage(lm_base)
+
+    if not isinstance(lms_other,Union[tuple,list]): lms_other = [lms_other]
+    lms_other = [sitk.ReadImage(lm) for lm in lms_other]
+    return merge(lm_base,lms_other)
+
 
 
 
@@ -134,7 +182,7 @@ def astype(id: int, inds):  # assumes arg 0 is an image
 
 
 #dangerous as missing values will not be accounted for
-@astype(1, 0)
+@astype(2, 0)
 def get_labels(img):
     arr = sitk.GetArrayFromImage(img)
     arr = np.unique(arr)
@@ -183,7 +231,7 @@ def remove_labels(lm, labels):
 def relabel(lm,remapping:dict) -> sitk.Image:
         org_type = lm.GetPixelID()
         lm_cc= to_label(lm)
-        lm_cc = sitk.ChangeLabelLabelMap(lm_cc,remapping)
+        lm_cc = sitk.ChangeLabel(lm_cc,remapping)
         try:
             if lm_cc.GetPixelID() != org_type:
                 lm_cc = sitk.Cast(lm_cc, org_type)
@@ -210,11 +258,34 @@ def to_binary(lm):
     lm = fil.Execute(lm)
     return lm
 
+def to_binary_np(lm):
+    """
+    Numpy-based version of to_binary that converts any non-zero pixels to 1
+    """
+    # Get numpy array from SimpleITK image
+    lm_np = sitk.GetArrayFromImage(lm)
+    
+    # Convert any non-zero values to 1, keep zeros as 0
+    binary_np = (lm_np > 0).astype(np.uint8)
+    
+    # Convert back to SimpleITK image
+    binary_img = sitk.GetImageFromArray(binary_np)
+    
+    # Copy metadata from original image
+    binary_img.SetOrigin(lm.GetOrigin())
+    binary_img.SetSpacing(lm.GetSpacing())
+    binary_img.SetDirection(lm.GetDirection())
+    
+    return binary_img
 
 
 
-@astype(22, 0)
+
+@astype(2, 0)
 def single_label(mask, target_label):
+    '''
+    Selects a single label from the mask image and sets all other labels to 0
+    '''
     target_label = np_to_native(target_label)
     labs_all = get_labels(mask)
     if len(labs_all) > 1:
@@ -224,7 +295,7 @@ def single_label(mask, target_label):
         dici = {}
     active = {target_label: 1}
     dici.update(active)
-    single_label = sitk.ChangeLabelLabelMap(mask, dici)
+    single_label = sitk.ChangeLabel(mask, dici)
     return single_label
 
 def single_label_np(lm, target_label):
@@ -236,19 +307,19 @@ def single_label_np(lm, target_label):
     return lm
 
 
-@astype(1, 0)
+@astype(2, 0)
 def to_cc(lm):
         lm_cc = sitk.ConnectedComponent(lm)
         return lm_cc
 
 
 
-@astype(22, 0)
+@astype(2, 0)
 def to_label(x):
     return x
 
 
-@astype(1, 0)
+@astype(2, 0)
 def to_int(x):
     return x
 

@@ -1,5 +1,5 @@
 # %%
-from label_analysis.radiomics import *
+from label_analysis.radiomics_setup import *
 import SimpleITK as sitk
 from utilz.helpers import chunks, find_matching_fn, info_from_filename, multiprocess_multiarg
 from label_analysis.helpers import get_labels, relabel, remove_organ_label, to_cc
@@ -11,7 +11,7 @@ import sys
 from utilz.imageviewers import view_sitk, ImageMaskViewer
 from utilz.string import find_file
 
-from label_analysis.radiomics import radiomics_multiprocess
+from label_analysis.radiomics_setup import radiomics_multiprocess
 sys.path+=["/home/ub/code"]
 from label_analysis.helpers import to_int, to_label
 import SimpleITK as sitk

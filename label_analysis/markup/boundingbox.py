@@ -14,6 +14,10 @@ Instead of max indices, stores sizes along each axis.
 from __future__ import annotations
 
 import argparse
+
+from utilz.helpers import set_autoreload
+
+from label_analysis.helpers import get_labels, to_cc
 from label_analysis.geometry import LabelMapGeometry
 from utilz.fileio import load_json
 import csv
@@ -24,6 +28,8 @@ from typing import Iterable, List, Tuple, Dict, Any, Optional
 
 import numpy as np
 import SimpleITK as sitk
+
+from label_analysis.helpers import remap_single_label
 
 
 # -------------------------------
@@ -313,20 +319,42 @@ def main():
 if __name__ == "__main__":
 # %%
 #SECTION:-------------------- SETUP--------------------------------------------------------------------------------------
+    set_autoreload()
 
     lm_fn = "/home/ub/code/label_analysis/label_analysis/files/two_lesions.nrrd"
+    lm2_fn = "/home/ub/Documents/nodes_90_411Ta_CAP1p5SoftTissue.nii.gz_2-Segment_1-label.nrrd"
+    point2_fn = "/home/ub/Documents/nodes_90.mrk.json"
+
     cc_fn  = "/home/ub/code/label_analysis/label_analysis/files/two_lesions_cc.mrk.json"
     point_fn = "/home/ub/code/label_analysis/label_analysis/files/two_lesions_point.mrk.json"
-    lm = sitk.ReadImage(lm_fn)
+    lm = sitk.ReadImage(lm2_fn)
+    lmcc = to_cc(lm)
+# %%
+
+    img=lmcc
+    get_labels(lmcc)
+    arr = sitk.GetArrayFromImage(img)
+    arr = np.unique(arr)
+    arr_int = [int(a) for a in arr if a != 0]
+# %%
 
     cc = load_json(cc_fn)
     point = load_json(point_fn)
 
-    L = LabelMapGeometry(lm)
+# %%
+   
+    L = LabelMapGeometry(lm2_fn,compute_feret=False)
     L.nbrhoods 
     L.fil.ComputeOrientedBoundingBoxOn()
     L.Execute(L.lm_cc)
+
+    L.lm_org = sitk.Cast(L.lm_org,sitk.sitkUInt32)
+
+    L.create_lm_cc()
+    
+    
 # %%
+    point = load_json(point2_fn)
     pts = load_markups_points_lps(cc_fn)
     idx = points_lps_mm_to_indices(pts, lm)
     bb = bbox_from_indices(idx, lm.GetSize(), pad=0)
@@ -373,7 +401,24 @@ if __name__ == "__main__":
 # %%
     bb = bbox_from_markup_file(cc_fn, lm_fn)
 # %%
-    L.nbrhoods
 
-
+    lms = []
+    key = {}
+    start_ind = 0
+    labels_org = get_labels(L.lm_org)
+    if len(labels_org) > 0:
+        for label in labels_org:
+            lm1, labs = remap_single_label(L.lm_org, label, start_ind)
+            k = {l: label for l in labs}
+            start_ind = max(labs)
+            lms.append(lm1)
+            key.update(k)
+        merger = sitk.MergeLabelMapFilter()
+        merger.SetMethod(0)
+        L.lm_cc = merger.Execute(*lms)
+        L.key = key
+# %%
+#SECTION:-------------------- TRoubleshooting--------------------------------------------------------------------------------------
+    lm = sitk.ConnectedComponent(L.lm_org)
+    get_labels(lm)
 # %%

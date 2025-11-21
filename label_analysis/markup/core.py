@@ -178,7 +178,7 @@ def load_markups_points_lps(mrk_path: Path) -> np.ndarray:
         P[:, :2] *= -1
     return P
 
-def load_markups_points_indices(mrk_path: Path, img: [sitk.Image,str,Path]) -> np.ndarray:
+def load_markups_points_indices(mrk_path: Path, img: sitk.Image|str|Path) -> np.ndarray:
     if not isinstance(img, sitk.Image):
         img = sitk.ReadImage(str(img))
     pts = load_markups_points_lps(mrk_path)

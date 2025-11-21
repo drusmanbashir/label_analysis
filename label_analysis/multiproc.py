@@ -2,7 +2,7 @@
 import os
 
 from label_analysis.geometry import LabelMapGeometry
-from label_analysis.radiomics import *
+from label_analysis.radiomics_setup import *
 import logging
 import sys
 import time
@@ -48,6 +48,40 @@ class LabelMapGeometryRay:
         dfs = pd.concat(nbrhoods, ignore_index=True)
         return dfs
 
+@ray.remote(num_cpus=4)
+class BatchScorerRay:
+    def __init__(self, actor_id):
+        self.actor_id = actor_id
+
+    def process(
+        self,
+        gt_fns: Union[Path, list],
+        preds_fldr: Path,
+        ignore_labels_gt: list,
+        ignore_labels_pred: list,
+        imgs_fldr: Path = None,
+        partial_df: pd.DataFrame = None,
+        exclude_fns=[],
+        output_fldr=None,
+        do_radiomics=False,
+        dusting_threshold=1,
+        debug=False,
+    ):
+        print("process {} ".format(self.actor_id))
+        self.B = BatchScorer2(
+            output_suffix=self.actor_id,
+            gt_fns=gt_fns,
+            preds_fldr=preds_fldr,
+            ignore_labels_gt=ignore_labels_gt,
+            ignore_labels_pred=ignore_labels_pred,
+            imgs_fldr=imgs_fldr,
+            partial_df=partial_df,
+            exclude_fns=exclude_fns,
+            do_radiomics=do_radiomics,
+            dusting_threshold=dusting_threshold,
+            debug=debug,
+        )
+        return self.B.process()
 
 # %%
 #SECTION:-------------------- SETUP--------------------------------------------------------------------------------------

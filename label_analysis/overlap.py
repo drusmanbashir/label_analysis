@@ -4,8 +4,8 @@ import sys
 from functools import reduce
 
 import networkx as nx
-import ray
 from label_analysis.geometry import LabelMapGeometry
+from label_analysis.geometry_itk import LabelMapGeometryITK
 
 sys.path += ["/home/ub/code"]
 import itertools as il
@@ -955,42 +955,6 @@ class BatchScorer2(BatchScorer):
         return output_fn
 
 
-@ray.remote(num_cpus=4)
-class BatchScorerRay:
-    def __init__(self, actor_id):
-        self.actor_id = actor_id
-
-    def process(
-        self,
-        gt_fns: Union[Path, list],
-        preds_fldr: Path,
-        ignore_labels_gt: list,
-        ignore_labels_pred: list,
-        imgs_fldr: Path = None,
-        partial_df: pd.DataFrame = None,
-        exclude_fns=[],
-        output_fldr=None,
-        do_radiomics=False,
-        dusting_threshold=1,
-        debug=False,
-    ):
-        print("process {} ".format(self.actor_id))
-        self.B = BatchScorer2(
-            output_suffix=self.actor_id,
-            gt_fns=gt_fns,
-            preds_fldr=preds_fldr,
-            ignore_labels_gt=ignore_labels_gt,
-            ignore_labels_pred=ignore_labels_pred,
-            imgs_fldr=imgs_fldr,
-            partial_df=partial_df,
-            exclude_fns=exclude_fns,
-            do_radiomics=do_radiomics,
-            dusting_threshold=dusting_threshold,
-            debug=debug,
-        )
-        return self.B.process()
-
-
 #
 # B2 = BatchScorer2(1,*argi)
 # df = B2.process()
@@ -1017,7 +981,11 @@ if __name__ == "__main__":
     preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc")
     preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-1018_fixed_mc")
     res_fldr = preds_fldr / "results"
+    gt_fldr = Path("/s/xnat_shadow/crc/lms")
     fns =list(res_fldr.glob("*csv"))
+
+    gt_fns = list(gt_fldr.glob("*"))
+
 
 # %%
 
@@ -1035,6 +1003,7 @@ if __name__ == "__main__":
     sitk.WriteImage(L.lm_cc,"/home/ub/code/label_analysis/label_analysis/files/two_lesions_cc.nii")
 # %%
 
+    L = LabelMapGeometryITK(lm)
     L.lm_org.GetOrigin()
     L.lm_org.GetSpacing()
     L.fil.GetBoundingBox(1)
@@ -1079,10 +1048,8 @@ if __name__ == "__main__":
     partial_df = pd.concat(dfs)
 # %%
     # maybe_makedirs(preds_fldr/("results"))
-# %%
+# "crc_CRC004_20190425_CAP1p5.nii.gz"; //"/s/fran_storage/predictions/lidc2/LITS-911/lung_020.nii.gz"; %%
     preds_nnunet_fldr = Path("/s/datasets_bkp/ark/")
-    gt_fldr = Path("/s/xnat_shadow/crc/lms")
-    gt_fns = list(gt_fldr.glob("*"))
     gt_fns = [fn for fn in gt_fns if is_sitk_file(fn)]
 
     # ub_df_fn = "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/results/results_thresh1mm.xlsx"
@@ -1165,14 +1132,27 @@ if __name__ == "__main__":
 # %%
 # SECTION:-------------------- FILE SCOorer (ScorerAdvanced)-------------------------------------------------------------------------------------- <CR>
 
-    cid = "crc_CRC278"
 
-    gt_fn = [fn for fn in gt_fns if cid in fn.name][1]
-    pred_ub = find_matching_fn(gt_fn, preds_fldr, True)
+    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-1088")
+    cid = "crc_CRC266"
 
+    gt_fn = [fn for fn in gt_fns if cid in fn.name][0]
+    pred_ub = find_matching_fn(gt_fn, preds_fldr)
+
+    L1 = LabelMapGeometry(gt_fn)
+    L1.dust(0)
+    L2 = LabelMapGeometry(pred_ub)
+    L2.nbrhoods
+    pred = sitk.ReadImage(str(pred_ub))
+    lm = to_cc(pred)
+    get_labels(pred)
+    get_labels(lm)
+# %%
+    gt_fn = "/s/xnat_shadow/nodes/lms/nodes_15_20181023_LargeAbdo3p0eFoV.nii.gz"
+    pred_ub = "/s/fran_storage/predictions/nodes/LITS-1230/nodes_15_20181023_LargeAbdo3p0eFoV.nii.gz"
 # %%
     S = ScorerAdvanced(
-        gt_fn, pred_ub, ignore_labels_gt=[], ignore_labels_pred=[1]
+        gt_fn, pred_ub, ignore_labels_gt=[], ignore_labels_pred=[]
     )
 # %%
     df = S.process()
@@ -1362,4 +1342,5 @@ if __name__ == "__main__":
             excluded = L.nbrhoods[L.nbrhoods["length"] > 10]
             excluded = e
 # %%
+
 # %%
