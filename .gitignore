@@ -12,6 +12,7 @@ __pycache__/
 *.npz
 *.pt
 *.nii.*
+*.nii
 *.stl
 *.obj
 !testfiles/gt.nii.gz

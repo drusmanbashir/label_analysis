@@ -99,7 +99,7 @@ class TotalSegmenterLabels:
 
     def create_remapping(self,src_labels,dest_labels, as_dict=False,as_list=False):
         assert as_list or as_dict, "Either list mode or dict mode should be true"
-        if src_labels in ["all","label_localiser"] and dest_labels in ["all","label_localiser"]:
+        if src_labels in ["all","label_localiser"] and dest_labels in ["all","label_localiser","label_minimal"]:
             src_labels = getattr(self,src_labels)
             dest_labels = getattr(self,dest_labels)
             pairs = set(zip(src_labels,dest_labels))
@@ -109,6 +109,9 @@ class TotalSegmenterLabels:
             dest_labels = neo.tolist()
             src_labels = self.df["label_localiser"]
             src_labels = src_labels.tolist()
+            pairs = set(zip(src_labels,dest_labels))
+
+        else:
             pairs = set(zip(src_labels,dest_labels))
         # if src_labels == dest_labels:
         #     return None

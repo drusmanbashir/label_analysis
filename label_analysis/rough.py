@@ -10,8 +10,10 @@ if __name__ == "__main__":
     lm_fn= "/s/fran_storage/datasets/raw_data/lidc/lms/lidc_0030.nii.gz";
 
     lm_fn= "/s/xnat_shadow/crc/lms/crc_CRC004_20190425_CAP1p5.nii.gz"
+    node_fn = "/s/xnat_shadow/nodes/lms/nodes_91_20201124_CAP5p0SoftTissue.nii.gz"
 # %%
-    L = LabelMapGeometryITK(lm_fn)
+    L = LabelMapGeometryITK(node_fn)
+    L.nbrhoods
     rows_rem = L.nbrhoods["flatness"]==0 
     L.remove_rows(rows_rem)
 # %%
