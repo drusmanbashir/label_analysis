@@ -1,0 +1,35 @@
+
+[build-system]
+requires = ["setuptools>=69", "setuptools-scm>=8", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "label_analysis"
+description = "Label analysis utilities."
+readme = "README.md"
+requires-python = ">=3.9"
+dynamic = ["version"]
+
+authors = [{ name = "Usman Bashir" }]
+license = { text = "MIT" }
+
+dependencies = [
+  "versioneer>=0.28",
+  "networkx>=2.8",
+  "fasttransform",
+  "scipy",
+  "vtk>=9.3.1",
+
+  "utilz @ git+https://github.com/drusmanbashir/utilz.git@main",
+]
+
+[project.optional-dependencies]
+full = [
+  "pyradiomics @ git+https://github.com/drusmanbashir/pyradiomics.git",
+]
+
+[tool.setuptools.packages.find]
+include = ["label_analysis*"]
+
+[tool.setuptools]
+include-package-data = true
