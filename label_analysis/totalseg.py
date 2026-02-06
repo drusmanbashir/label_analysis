@@ -160,9 +160,9 @@ class TotalSegmenterLabels:
 
 if __name__ == "__main__":
     from fran.managers.project import Project
-    P =Project ('tmp')
+    P =Project ("totalseg")
     TSL = TotalSegmenterLabels()
-    rem = TSL.create_remapping("label_localiser","lungs", as_dict=True)
+    rem = TSL.create_remapping("all","label_minimal", as_dict=True)
 
     labs = TSL.lungs
     TSL.df["neo"] =  TSL.df["label_localiser"].where(TSL.df["label_localiser"].isin(labs),0)

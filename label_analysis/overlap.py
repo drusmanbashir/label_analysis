@@ -977,7 +977,7 @@ class BatchScorer2(BatchScorer):
 
 if __name__ == "__main__":
 # %%
-# SECTION:-------------------- SETUP-------------------------------------------------------------------------------------- <CR>
+# SECTION:-------------------- SETUP-------------------------------------------------------------------------------------- <CR> <CR>
     preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc")
     preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-1018_fixed_mc")
     res_fldr = preds_fldr / "results"
@@ -1059,7 +1059,7 @@ if __name__ == "__main__":
 
 
 # %%
-# SECTION:-------------------- Batchscorer Ray-------------------------------------------------------------------------------------- <CR>
+# SECTION:-------------------- Batchscorer Ray-------------------------------------------------------------------------------------- <CR> <CR>
 
     n_lists = 10
     # gt_fns = gt_fns[:64]
@@ -1089,7 +1089,7 @@ if __name__ == "__main__":
     bb.difference(aa)
 # %%
 # %%
-# SECTION:-------------------- Batchscorer single -------------------------------------------------------------------------------------- <CR>
+# SECTION:-------------------- Batchscorer single -------------------------------------------------------------------------------------- <CR> <CR>
 
     do_radiomics = False
     threshold = 0
@@ -1130,7 +1130,7 @@ if __name__ == "__main__":
 # %%
 
 # %%
-# SECTION:-------------------- FILE SCOorer (ScorerAdvanced)-------------------------------------------------------------------------------------- <CR>
+# SECTION:-------------------- FILE SCOorer (ScorerAdvanced)-------------------------------------------------------------------------------------- <CR> <CR>
 
 
     preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-1088")
@@ -1183,7 +1183,7 @@ if __name__ == "__main__":
     sitk.WriteImage(S.LP.lm_cc,"pred_cc.nii.gz")
     sitk.WriteImage(S.LG.lm_cc,"gt_cc.nii.gz")
 
-# SECTION:-------------------- TROUBLESHOOTING------------------------------------------------------------------------------------- <CR>
+# SECTION:-------------------- TROUBLESHOOTING------------------------------------------------------------------------------------- <CR> <CR>
 # %%
     fn1 = "/home/ub/code/label_analysis/pred_19.nrrd"
     fn2 = "/home/ub/code/label_analysis/gt_22.nrrd"
@@ -1311,7 +1311,7 @@ if __name__ == "__main__":
 # %%
 
 # %%
-# SECTION:-------------------- SORT out -------------------------------------------------------------------------------------- <CR>
+# SECTION:-------------------- SORT out -------------------------------------------------------------------------------------- <CR> <CR>
 
 # %%
     out_fldr_missed = Path(

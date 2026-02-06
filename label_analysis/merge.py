@@ -1,11 +1,9 @@
 # %%
-import functools as fl
 import itertools as il
 import shutil
 from pathlib import Path
 from typing import Union
 
-from fastcore.all import store_true
 from label_analysis.utils import align_sitk_imgs
 import pandas as pd
 import SimpleITK as sitk
@@ -14,7 +12,7 @@ from label_analysis.helpers import *
 from label_analysis.overlap import (LabelMapGeometry, get_1lbl_nbrhoods,
                                     labels_overlap )
 
-from utilz.fileio import is_filename, maybe_makedirs
+from utilz.fileio import maybe_makedirs
 from utilz.helpers import *
 from utilz.imageviewers import *
 #
