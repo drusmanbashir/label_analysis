@@ -168,6 +168,9 @@ class LabelMapGeometryITK(LabelMapGeometry):
             lm = lm_dict["lmap"]
             for i in tqdm(range(n_islands)):
                 obj = lm.GetNthLabelObject(i)
+                mom = obj.GetPrincipalMoments()      # tuple of eigenvalues
+                short_axis = 2.0 * (min(mom) ** 0.5) # physical units (mm)
+
                 rows.append(
                     {
                         "label_org": label_org,
@@ -176,9 +179,27 @@ class LabelMapGeometryITK(LabelMapGeometry):
                         "bbox": obj.GetBoundingBox(),
                         "flatness": float(obj.GetFlatness()),
                         "feret": float(obj.GetFeretDiameter()),
+                        "short_axis": float(short_axis),
                         "volume_mm3": float(obj.GetPhysicalSize()),
                     }
                 )
 
+
         self.nbrhoods = pd.DataFrame(rows)
         self.nbrhoods["bbox"] = self.nbrhoods["bbox"].apply(region_to_flat)
+
+
+if __name__ == '__main__':
+# %%
+    nodes_fldr = Path("/s/fran_storage/predictions/nodes/LITS-1405_LITS-1416_LITS-1417")
+    fns = ["/s/fran_storage/predictions/nodes/LITS-1405_LITS-1416_LITS-1417/nodes_140_Ta70413_ABDOMEN_2p00.nii.gz",
+           "/s/fran_storage/predictions/nodes/LITS-1405_LITS-1416_LITS-1417/nodes_n1_Ta80605_CAP1p5mm.nii.gz"]
+
+
+    li0 = sitk.ReadImage(fns[0])
+    li1 = sitk.ReadImage(fns[1])
+# %%
+
+    L = LabelMapGeometryITK(li0)
+    L2 = LabelMapGeometryITK(li1)
+# %%
