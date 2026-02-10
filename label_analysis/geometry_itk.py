@@ -1,5 +1,7 @@
 # %%
 import re
+import logging
+import numpy as np
 import sys
 from pathlib import Path
 from time import time
@@ -197,8 +199,21 @@ class LabelMapGeometryITK(LabelMapGeometry):
             for i in tqdm(range(n_islands)):
                 obj = lm.GetNthLabelObject(i)
                 mom = obj.GetPrincipalMoments()      # tuple of eigenvalues
-                short_axis = 2.0 * (min(mom) ** 0.5) # physical units (mm)
+                mom = np.asarray(obj.GetPrincipalMoments(), dtype=np.float64)
 
+                # If they're substantially negative, that's not just rounding noise
+                if np.any(mom < -1e-6):
+                    logging.warning(
+                        "Negative principal moments (label_org=%s, label_cc=%s): %s",
+                        label_org, int(obj.GetLabel()), mom
+                    )
+
+                mom = np.maximum(mom, 0.0)  # clamp tiny negatives to 0
+                major_m, mid_m, least_m = float(mom.max()), float(np.median(mom)), float(mom.min())
+
+                major_axis = 4.0 * np.sqrt(major_m)
+                minor_axis = 4.0 * np.sqrt(mid_m)
+                least_axis = 4.0 * np.sqrt(least_m)
                 rows.append(
                     {
                         "label_org": label_org,
@@ -207,7 +222,9 @@ class LabelMapGeometryITK(LabelMapGeometry):
                         "bbox": obj.GetBoundingBox(),
                         "flatness": float(obj.GetFlatness()),
                         "feret": float(obj.GetFeretDiameter()),
-                        "short_axis": float(short_axis),
+                        "major_axis": float(major_axis),
+                        "minor_axis": float(minor_axis),
+                        "least_axis": float(least_axis),
                         "volume_mm3": float(obj.GetPhysicalSize()),
                     }
                 )
@@ -257,14 +274,17 @@ if __name__ == '__main__':
     fns = ["/s/fran_storage/predictions/nodes/LITS-1405_LITS-1416_LITS-1417/nodes_140_Ta70413_ABDOMEN_2p00.nii.gz",
            "/s/fran_storage/predictions/nodes/LITS-1405_LITS-1416_LITS-1417/nodes_n1_Ta80605_CAP1p5mm.nii.gz"]
 
+    fn2 = "nodes_140_2labels.nii.gz-label.nrrd"
+    li2 = sitk.ReadImage(fn2)
 
     li0 = sitk.ReadImage(fns[0])
     li1 = sitk.ReadImage(fns[1])
 # %%
 
     L = LabelMapGeometryITK(li0)
-    L2 = LabelMapGeometryITK(li1)
+    L.nbrhoods.to_csv("latest.csv")
 
     itk.imwrite(L.lm_cc, "nodes_140_cc_labels.nii.gz")
-    L2.nbrhoods.to_csv("nodes_140_cc_labels.csv")
 # %%
+    L2 = LabelMapGeometryITK(li2)
+    L2.nbrhoods.to_csv("nodes_140_2labels.csv")
