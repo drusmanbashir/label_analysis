@@ -25,6 +25,58 @@ U8 = itk.UC
 U8Img = itk.Image[U8, Dim]
 
 
+
+        
+def _label_to_labelmap(li_org, lab, compute_feret=True):
+        """
+        Extract a single original label from an ITK label image and convert it
+        into a ShapeLabelMap, where each connected component becomes one label
+        object with geometry (centroid, feret, volume, etc.).
+        """
+        lm = create_binary_image(li_org, lab, lab)
+
+        LM = itk.LabelMap[itk.StatisticsLabelObject[itk.UL, 3]]
+        Bin2S = itk.BinaryImageToShapeLabelMapFilter[itk.Image[itk.UC, 3], LM]
+
+        f = Bin2S.New(Input=lm)
+        f.SetInputForegroundValue(1)
+        f.SetComputeFeretDiameter(compute_feret)
+        f.Update()
+
+        return f.GetOutput()
+
+
+def _merge_labelmap_into(out, lmap):
+    CCImg = type(out)
+    LM = type(lmap)
+
+    to_img = itk.LabelMapToLabelImageFilter[LM, CCImg].New(Input=lmap)
+    to_img.Update()
+
+    maxf = itk.MaximumImageFilter[CCImg, CCImg, CCImg].New(
+        Input1=out, Input2=to_img.GetOutput()
+    )
+    maxf.Update()
+    return maxf.GetOutput()
+
+
+
+def _alloc_cc_image(ref):
+        """
+        Allocate an empty ITK label image (UL,3) matching the geometry
+        of a reference image, initialised to zero.
+        """
+        CCImg = itk.Image[itk.US, 3]
+        out = CCImg.New(
+            Regions=ref.GetLargestPossibleRegion(),
+            Spacing=ref.GetSpacing(),
+            Origin=ref.GetOrigin(),
+            Direction=ref.GetDirection(),
+        )
+        out.Allocate()
+        out.FillBuffer(0)
+        return out
+
 def create_binary_image(li, low, high=None):
     BT = itk.BinaryThresholdImageFilter[itk.Image[LabelT, Dim], U8Img]
     eq = BT.New(Input=li)
@@ -132,30 +184,6 @@ class LabelMapGeometryITK(LabelMapGeometry):
     def create_li_binary(self):
         self.li_binary = create_binary_image(self.li_org, 1)
 
-    def create_lm_cc(self, compute_feret=True):
-        key = {}
-        self.labels_org = get_labels(self.li_sitk)
-        if len(self.labels_org) > 0:
-            for lab in self.labels_org:
-                lm = create_binary_image(self.li_org, lab, lab)
-                # LO = itk.ShapeLabelObject[itk.UL, 3]
-                LM = itk.LabelMap[itk.StatisticsLabelObject[itk.UL, 3]]
-                Bin2S = itk.BinaryImageToShapeLabelMapFilter[itk.Image[itk.UC, 3], LM]
-                f = Bin2S.New(Input=lm)
-                f.SetComputeFeretDiameter(compute_feret)
-                f.SetInputForegroundValue(1)
-                # f.SetComputeOrientedBoundingBox(True)
-                f.Update()
-                lmap = f.GetOutput()
-                k = {l: lab for l in lmap.GetLabels()}
-                key.update(k)
-                dici = {
-                    "lmap": lmap,
-                    "label_org": lab,
-                    "n_islands": lmap.GetNumberOfLabelObjects(),
-                }
-                self.unique_lms.append(dici)
-            self.key = key
 
     def __len__(self):
         return len(self.unique_lms)
@@ -189,6 +217,40 @@ class LabelMapGeometryITK(LabelMapGeometry):
         self.nbrhoods["bbox"] = self.nbrhoods["bbox"].apply(region_to_flat)
 
 
+
+    def create_lm_cc(self, compute_feret=True):
+        """
+        Build a global connected-component label image (lm_cc) from an input
+        multi-label segmentation.
+
+        Each connected component receives a unique label_cc, while `self.key`
+        records the mapping: label_cc → original label.
+        """
+        self.key = {}
+        self.unique_lms = []
+
+        labels_org = get_labels(self.li_sitk)
+        if not labels_org:
+            self.lm_cc = itk.Image[itk.UL, 3]()
+
+        self.lm_cc = _alloc_cc_image(self.li_org)
+
+        for lab in labels_org:
+            lmap = _label_to_labelmap(self.li_org, lab, compute_feret)
+
+            for cc in lmap.GetLabels():
+                self.key[int(cc)] = lab
+
+            self.unique_lms.append(
+                {
+                    "lmap": lmap,
+                    "label_org": lab,
+                    "n_islands": lmap.GetNumberOfLabelObjects(),
+                }
+            )
+
+            self.lm_cc = _merge_labelmap_into(self.lm_cc, lmap)
+
 if __name__ == '__main__':
 # %%
     nodes_fldr = Path("/s/fran_storage/predictions/nodes/LITS-1405_LITS-1416_LITS-1417")
@@ -202,4 +264,7 @@ if __name__ == '__main__':
 
     L = LabelMapGeometryITK(li0)
     L2 = LabelMapGeometryITK(li1)
+
+    itk.imwrite(L.lm_cc, "nodes_140_cc_labels.nii.gz")
+    L2.nbrhoods.to_csv("nodes_140_cc_labels.csv")
 # %%
