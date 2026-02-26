@@ -7,7 +7,7 @@ from label_analysis.geometry import LabelMapGeometry
 import SimpleITK as sitk
 from utilz.fileio import load_json, maybe_makedirs, save_json
 from utilz.imageviewers import view_sitk
-from utilz.string import info_from_filename, replace_extension
+from utilz.stringz import info_from_filename, replace_extension
 tmplt_folder = Path("/home/ub/code/label_analysis/label_analysis/markup_templates/")
 
 

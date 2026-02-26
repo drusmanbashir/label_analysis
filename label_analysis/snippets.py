@@ -9,7 +9,7 @@ import pandas as pd
 
 import sys
 from utilz.imageviewers import view_sitk, ImageMaskViewer
-from utilz.string import find_file
+from utilz.stringz import find_file
 
 from label_analysis.radiomics_setup import radiomics_multiprocess
 sys.path+=["/home/ub/code"]

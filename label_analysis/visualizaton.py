@@ -13,7 +13,10 @@ tr = ipdb.set_trace
 import vtk
 import SimpleITK as sitk
 from vtk.util.numpy_support import numpy_to_vtk
-from utilz.colour_palette import colour_palette  # Import the color palette
+try:
+    from fran.utils.colour_palette import colour_palette
+except Exception:
+    colour_palette = {}
 
 def normalize_color(color):
     """Normalize an RGB color from [0, 255] to [0, 1]."""

@@ -16,7 +16,7 @@ import shutil
 from utilz.fileio import load_json, maybe_makedirs
 from utilz.helpers import find_matching_fn, pp
 from utilz.imageviewers import view_sitk
-from utilz.string import info_from_filename, int_to_str, strip_extension
+from utilz.stringz import info_from_filename, int_to_str, strip_extension
 
 tr = ipdb.set_trace
 

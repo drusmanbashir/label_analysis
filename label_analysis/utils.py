@@ -2,7 +2,7 @@
 from typing import Union
 from pathlib import Path
 from fastcore.all import is_close, listify
-from fastcore.meta import test_eq
+from fastcore.test import test_eq
 import torch
 import shutil
 from torch import nn
@@ -19,10 +19,10 @@ from utilz.fileio import maybe_makedirs, str_to_path
 import SimpleITK as sitk
 from utilz.helpers import abs_list
 from utilz.itk_sitk import get_sitk_target_size_from_spacings
-from utilz.string import get_extension
+from utilz.stringz import get_extension
 import ipdb
 
-from utilz.string import cleanup_fname
+from utilz.stringz import cleanup_fname
 tr = ipdb.set_trace
 from fasttransform import Transform, ItemTransform
 import itertools
@@ -486,4 +486,3 @@ if __name__ == "__main__":
     np2 = np2.transpose(0,1)
     plt.imshow(np2)
     ImageMaskViewer([a,a])
-

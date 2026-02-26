@@ -11,7 +11,7 @@ from label_analysis.helpers import *
 
 from utilz.helpers import *
 from utilz.imageviewers import *
-from utilz.string import (
+from utilz.stringz import (
     info_from_filename,
 )
 np.set_printoptions(linewidth=250)

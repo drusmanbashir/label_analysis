@@ -2,7 +2,7 @@
 # %%
 import SimpleITK as sitk
 from utilz.helpers import multiprocess_multiarg
-from utilz.sitk_utils import align_sitk_imgs
+from label_analysis.utils import align_sitk_imgs
 from pathlib import Path
 from label_analysis.helpers      import get_labels
 

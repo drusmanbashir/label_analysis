@@ -20,7 +20,7 @@ from label_analysis.helpers import *
 from utilz.fileio import load_json, maybe_makedirs
 from utilz.helpers import *
 from utilz.imageviewers import *
-from utilz.string import (
+from utilz.stringz import (
     info_from_filename,
     match_filenames,
 )
