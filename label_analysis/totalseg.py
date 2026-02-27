@@ -7,10 +7,17 @@ import pandas as pd
 from pathlib import Path
 import SimpleITK as sitk
 from fran.data.dataregistry import DS
+from dataclasses import dataclass, field
+#
+#
+@dataclass
+class Structure:
+    name: str
+    label: int
+    label_localiser: int|list
+    label_minimal: int|list
+    location: str
 
-#
-#
-#
 #
 #
 # class TotalSegmenterLabels():
@@ -65,7 +72,7 @@ class TotalSegmenterLabels:
         Loads label information into dataframes
         """
         totalseg_folder = DS['totalseg_meta'].folder
-        meta_fn = totalseg_folder / "meta.xlsx"
+        meta_fn = totalseg_folder / "meta_codex.xlsx"
         self.df = pd.read_excel(meta_fn, sheet_name="labels")
         self.meta = pd.read_excel(meta_fn, sheet_name="meta")
 
@@ -97,17 +104,44 @@ class TotalSegmenterLabels:
             labs_out = labs['label_localiser'].to_list()
         return labs_out
 
-    def create_remapping(self,src_labels,dest_labels, as_dict=False,as_list=False):
+    def get_label_by_name(self, name: str, group:str):
+        """
+        Return unique numeric `label_localiser` values for rows whose
+        `structure_short` matches the provided word.
+
+        Parameters
+        ----------
+        word : str
+            Search token for `structure_short`.
+        """
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("word must be a non-empty string")
+
+        structures = self.df["structure_short"].fillna("").astype(str)
+        token = name.strip()
+        mask = structures.str.lower() == token.lower()
+
+        labels = (
+            self.df.loc[mask, "label_localiser"]
+            .dropna()
+            .astype(int)
+            .unique()
+            .tolist()
+        )
+        return labels
+
+    def create_remapping(self,src_labels:str|list,dest_labels:str|list, as_dict=False,as_list=False):
         assert as_list or as_dict, "Either list mode or dict mode should be true"
         if src_labels in ["all","label_localiser"] and dest_labels in ["all","label_localiser","label_minimal"]:
             src_labels = getattr(self,src_labels)
             dest_labels = getattr(self,dest_labels)
             pairs = set(zip(src_labels,dest_labels))
-        elif src_labels == "label_localiser":
+        elif src_labels in ["label_localiser", "all"]:
             dest_labels = getattr(self,dest_labels)
-            neo = self.df["label_localiser"].where(self.df["label_localiser"].isin(dest_labels),0)
+            dest_labels = getattr(dest_labels,src_labels)
+            neo = self.df[src_labels].where(self.df[src_labels].isin(dest_labels),0)
             dest_labels = neo.tolist()
-            src_labels = self.df["label_localiser"]
+            src_labels = self.df[src_labels]
             src_labels = src_labels.tolist()
             pairs = set(zip(src_labels,dest_labels))
 
@@ -131,9 +165,9 @@ class TotalSegmenterLabels:
         List[int]: Retrieve all label IDs.
 
         Returns a complete list of all available label identifiers in the dataset.
+
         """
         return self.df.label.to_list()
-
     # @property
     # def label_short(self):
     #     """
@@ -146,16 +180,33 @@ class TotalSegmenterLabels:
     def label_localiser(self):
         return self.df.label_localiser.to_list()
 
-    @property
-    def lungs(self):
-        lungs = self.df["structure_short"].isin(["lung"])
-        labels = self.df.loc[lungs,'label_localiser'].unique().tolist()
-        return labels
-
     @property 
     def label_minimal(self):
         return self.df.label_minimal.to_list()
 
+    def __getattr__(self, structure: str):
+        """
+        Dynamic access:
+        - `TSL.<structure_word>` -> unique localiser labels for matching structure_short
+        """
+
+        df = self.df
+
+        for str_cols in ["structure_short","structure", "location_localiser", "location"]:
+            rows = df.loc[df[str_cols] == structure]
+            if len(rows) > 0:
+                label_loc = rows.label_localiser.unique().tolist()
+                label= rows.label.unique().tolist()
+                label_min = rows.label_minimal.unique().tolist()
+                location  =rows.location.unique().tolist()
+                SN= Structure(name= structure, label= label, label_localiser=label_loc, label_minimal=label_min, location=location)
+                return SN
+        raise AttributeError(f"TSL attribs can be either df column names or entries of structure_short or structure. Full list of structure shorts: {df['structure_short'].unique().tolist()}\n Full list of structures: {df['structure'].unique().tolist()}")
+        # labels = self.get_label_by_name(name, group)
+        # if labels:
+        #     return labels
+        # 
+        #
 # %%
 
 if __name__ == "__main__":
@@ -164,10 +215,10 @@ if __name__ == "__main__":
     TSL = TotalSegmenterLabels()
     rem = TSL.create_remapping("all","label_minimal", as_dict=True)
 
-    labs = TSL.lungs
-    TSL.df["neo"] =  TSL.df["label_localiser"].where(TSL.df["label_localiser"].isin(labs),0)
-    outer = TSL.df["neo"].tolist()
+    labs = TSL.lung
 
+    print(TSL.gi)
+    TSL.create_remapping("label_localiser", "gu", as_dict=True)
 
 # %%
     fn1 = "/s/fran_storage/predictions/totalseg/LITS-827/lidc2_0001.nii.gz"
@@ -188,9 +239,28 @@ if __name__ == "__main__":
     pat = "_left|_right"
     ents=[]
 # %%
-    for aa in cr:
+    TSL.create_remapping(TSL.all, TSL.lung,as_dict=True
+
+
+        
+        
+    )
+# %r
+    src_labels = TSL.label_localiser
+    src_labels = ""
+    dest_labels = "lung"
+    dest_labels = getattr(TSL,dest_labels)
+    getattr(dest_labels, src_labels)
+    dest_labels = dest_labels.label_localiser
+
+
+    neo = TSL.df["label_localiser"].where(TSL.df["label_localiser"].isin(dest_labels),0)
+    src_labels = getattr(TSL,src_labels)
+    src_labels = src_labels.tolist()
+# %%
+    for structure in cr:
         # aa=    cr.iloc[0]
-        b = re.sub(pat,"",aa)
+        b = re.sub(pat,"",structure)
         ents.append(b)
 
     df = df.assign(short = ents)
@@ -199,7 +269,7 @@ if __name__ == "__main__":
 # %%
     as_dict = True
     src_labels= "label_localiser"
-    dest_labels = "lungs"
+    dest_labels = "lung"
 
     assert as_list or as_dict, "Either list mode or dict mode should be true"
     if src_labels in ["all","label_localiser"] and dest_labels in ["all","label_localiser"]:
@@ -224,15 +294,15 @@ if __name__ == "__main__":
     short = df.structure_short
 # %%
     dones={}
-    for aa in short:
-        if not aa in dones.keys():
+    for structure in short:
+        if not structure in dones.keys():
             label = next(key)
-            dici = {aa:label}
+            dici = {structure:label}
             dones.update(dici)
 # %%
     labs =[]
-    for aa in short:
-        lab = dones[aa]
+    for structure in short:
+        lab = dones[structure]
         labs.append(lab)
 # %%
     df = df.assign(label_short= labs)
@@ -253,6 +323,19 @@ if __name__ == "__main__":
 # %%
     lm1 = relabel(lm1,remapping)
     l3 = merge(lm1,lm2)
+# %%
+    structure = "lung"
+    df = TSL.df
+    df[df["structure_short"] == structure]
+    df[df["structure"] == structure]
+
+    rows = df.loc[df["structure_short" ] == structure]
+    label_loc = rows.label_localiser.unique().tolist()
+    label= rows.label.unique().tolist()
+    label_min = rows.label_minimal.unique().tolist()
+    location  =rows.location.unique().tolist()
+
+    SN= Structure(name= structure, label= label, label_localiser=label_loc, label_minimal=label_min, location=location)
 # %%
 
  
