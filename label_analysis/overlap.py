@@ -286,6 +286,8 @@ class ScorerLabelMaps:
             # self.radiomics=[{"case_id":self.case_id, "gt_fn":self.gt_fn ,"label":lab} for lab in self.LG.nbrhoods['label_cc']]
 
         else:
+            from label_analysis.radiomics_setup import radiomics_multiprocess
+
             radiomics = radiomics_multiprocess(
                 self.img,
                 self.LG.lm_cc,

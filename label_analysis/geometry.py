@@ -7,7 +7,6 @@ import sys
 # sys.path.append("/home/ub/code/label_analysis/label_analysis/cpp/build")
 # import printcpp
 from label_analysis.helpers import remap_single_label
-from label_analysis.radiomics_setup import *
 
 sys.path += ["/home/ub/code"]
 import itertools as il
@@ -174,6 +173,8 @@ class LabelMapGeometry(GetAttr):
         )
 
     def radiomics(self, params_fn=None):
+        from label_analysis.radiomics_setup import radiomics_multiprocess
+
         labs_cc = self.nbrhoods["label_cc"]
         if len(labs_cc) > 0:
             rads = radiomics_multiprocess(
