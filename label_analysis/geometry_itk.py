@@ -12,11 +12,12 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
+from utilz.imageviewers import ImageMaskViewer
 from utilz.itk_sitk import (ConvertItkImageToSimpleItkImage,
-                                 ConvertSimpleItkImageToItkImage)
+                                 ConvertSimpleItkImageToItkImage, monai_to_sitk_image)
 from tqdm import tqdm
 
-from label_analysis.geometry import LabelMapGeometry
+from label_analysis.geometry import LabelMapGeometry, load_labelmap_like_to_sitk
 from label_analysis.helpers import *
 from label_analysis.helpers import to_label
 
@@ -108,19 +109,17 @@ class LabelMapGeometryITK(LabelMapGeometry):
     ):
         self.unique_lms = []
         # printcpp.say("HO")
-        if isinstance(li, Path) or isinstance(li, str):
-            self.lm_fn = li
-            li = itk.imread(li, itk.UC)
-        else:
+        if isinstance(li, itk.Image):
             self.lm_fn = None
-
-        if isinstance(li, sitk.Image):
-            self.li_sitk = li
-            self.li_org = ConvertSimpleItkImageToItkImage(li, itk.UC)
-        elif isinstance(li, itk.Image):
             self.li_org = li
             self.li_sitk = ConvertItkImageToSimpleItkImage(li, sitk.sitkUInt8)
+        else:
+            li_sitk, src = load_labelmap_like_to_sitk(li)
+            self.lm_fn = src
+            self.li_sitk = li_sitk
+            self.li_org = ConvertSimpleItkImageToItkImage(li_sitk, itk.UC)
         # self.lm.Update()
+        assert isinstance(ignore_labels, list|None), "ignore_labels must be a list"
         if len(ignore_labels) > 0:
             self._remove_labels(ignore_labels)
         self.img = img
@@ -132,6 +131,17 @@ class LabelMapGeometryITK(LabelMapGeometry):
         self.dust_and_calc_geom(
             dusting_threshold=dusting_threshold, remove_flat=remove_flat
         )
+
+    def _remove_labels(self, labels):
+        labels = listify(labels)
+        if len(labels) == 0:
+            return
+        remapping = {int(l): 0 for l in labels}
+        # Adapter path: ITK -> SITK relabel -> ITK
+        li_sitk = ConvertItkImageToSimpleItkImage(self.li_org, sitk.sitkUInt8)
+        li_sitk = relabel(li_sitk, remapping)
+        self.li_sitk = li_sitk
+        self.li_org = ConvertSimpleItkImageToItkImage(li_sitk, itk.UC)
 
     def remove_labels(self, labels):
         raise NotImplementedError
@@ -186,11 +196,27 @@ class LabelMapGeometryITK(LabelMapGeometry):
     def create_li_binary(self):
         self.li_binary = create_binary_image(self.li_org, 1)
 
+    @property
+    def lm_cc_sitk(self):
+        return ConvertItkImageToSimpleItkImage(self.lm_cc, sitk.sitkUInt32)
+
 
     def __len__(self):
         return len(self.unique_lms)
 
     def calc_geom(self):
+        columns = [
+            "label_org",
+            "label_cc",
+            "cent",
+            "bbox",
+            "flatness",
+            "feret",
+            "major_axis",
+            "minor_axis",
+            "least_axis",
+            "volume_cc",
+        ]
         rows = []
         for lm_dict in self.unique_lms:
             label_org = lm_dict["label_org"]
@@ -225,48 +251,42 @@ class LabelMapGeometryITK(LabelMapGeometry):
                         "major_axis": float(major_axis),
                         "minor_axis": float(minor_axis),
                         "least_axis": float(least_axis),
-                        "volume_mm3": float(obj.GetPhysicalSize()),
+                        "volume_cc": float(obj.GetPhysicalSize()) * 1e-3,
                     }
                 )
 
 
-        self.nbrhoods = pd.DataFrame(rows)
+        self.nbrhoods = pd.DataFrame(rows, columns=columns)
+        # if not self.nbrhoods.empty:
         self.nbrhoods["bbox"] = self.nbrhoods["bbox"].apply(region_to_flat)
 
 
 
     def create_lm_cc(self, compute_feret=True):
-        """
-        Build a global connected-component label image (lm_cc) from an input
-        multi-label segmentation.
+            self.key = {}
+            self.unique_lms = []
 
-        Each connected component receives a unique label_cc, while `self.key`
-        records the mapping: label_cc → original label.
-        """
-        self.key = {}
-        self.unique_lms = []
+            labels_org = get_labels(self.li_sitk)
+            self.lm_cc = _alloc_cc_image(self.li_org)
 
-        labels_org = get_labels(self.li_sitk)
-        if not labels_org:
-            self.lm_cc = itk.Image[itk.UL, 3]()
+            if not labels_org:
+                return
 
-        self.lm_cc = _alloc_cc_image(self.li_org)
+            for lab in labels_org:
+                lmap = _label_to_labelmap(self.li_org, lab, compute_feret)
 
-        for lab in labels_org:
-            lmap = _label_to_labelmap(self.li_org, lab, compute_feret)
+                for cc in lmap.GetLabels():
+                    self.key[int(cc)] = lab
 
-            for cc in lmap.GetLabels():
-                self.key[int(cc)] = lab
+                self.unique_lms.append(
+                    {
+                        "lmap": lmap,
+                        "label_org": lab,
+                        "n_islands": lmap.GetNumberOfLabelObjects(),
+                    }
+                )
 
-            self.unique_lms.append(
-                {
-                    "lmap": lmap,
-                    "label_org": lab,
-                    "n_islands": lmap.GetNumberOfLabelObjects(),
-                }
-            )
-
-            self.lm_cc = _merge_labelmap_into(self.lm_cc, lmap)
+                self.lm_cc = _merge_labelmap_into(self.lm_cc, lmap)
 
 if __name__ == '__main__':
 # %%
@@ -281,10 +301,44 @@ if __name__ == '__main__':
     li1 = sitk.ReadImage(fns[1])
 # %%
 
-    L = LabelMapGeometryITK(li0)
+    # li0 = "/media/UB/datasets/kits21/lms/kits21_00018.nii.gz"
+    li0 =  "/media/UB/datasets/lidc/lms/lidc_0143.nii.gz"
+    L = LabelMapGeometryITK(li0, ignore_labels=[], dusting_threshold=0.0)
     L.nbrhoods.to_csv("latest.csv")
 
     itk.imwrite(L.lm_cc, "nodes_140_cc_labels.nii.gz")
 # %%
     L2 = LabelMapGeometryITK(li2)
     L2.nbrhoods.to_csv("nodes_140_2labels.csv")
+# %%
+    fldr = Path("/r/datasets/preprocessed/kits/lbd/spc_080_080_150_rlb00ec4022_rlb00ec4022_ex050/lms")
+    fns = list(fldr.glob("*"))
+# %%
+    for fn in fns:
+        print(fn)
+        L = LabelMapGeometryITK(fn)
+# %%
+    import torch
+
+    lm_fn = Path("/r/datasets/preprocessed/kits/lbd/spc_080_080_150_rlb00ec4022_rlb00ec4022_ex050/lms/kits21_00290.pt")
+    im_fn = Path("/r/datasets/preprocessed/kits/lbd/spc_080_080_150_rlb00ec4022_rlb00ec4022_ex050/images/kits21_00290.pt")
+
+    lm = torch.load(lm_fn,weights_only=False)
+    im = torch.load(im_fn,weights_only=False)
+
+    ImageMaskViewer([im,lm])
+    L = LabelMapGeometryITK(lm)
+    L.nbrhoods
+# %%
+    im_sitk , src= monai_to_sitk_image(lm)
+    
+    lm = sitk.GetArrayFromImage(im_sitk)
+
+    lm = torch.Tensor(lm)
+
+    itk.imwrite(L.lm_cc,"test.nii.gz")
+    ImageMaskViewer([im,lm])
+    L = LabelMapGeometryITK(lm)
+    L.nbrhoods
+
+# %%

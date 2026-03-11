@@ -1,6 +1,5 @@
 # %%
-# %%
-
+import argparse
 import ipdb
 from vtkmodules.vtkCommonColor import vtkNamedColors
 from vtkmodules.vtkFiltersCore import vtkMarchingCubes
@@ -17,6 +16,35 @@ try:
     from fran.utils.colour_palette import colour_palette
 except Exception:
     colour_palette = {}
+
+
+CT_PRESETS = {
+    "outline": {"kind": "outline"},
+    "skin": {
+        "kind": "surface",
+        "threshold": 350,
+        "color": (0.94, 0.72, 0.63),
+        "opacity": 0.20,
+    },
+    "soft_tissue": {
+        "kind": "surface",
+        "threshold": 100,
+        "color": (0.82, 0.62, 0.56),
+        "opacity": 0.12,
+    },
+    "bone": {
+        "kind": "surface",
+        "threshold": 250,
+        "color": (0.95, 0.95, 0.90),
+        "opacity": 0.22,
+    },
+    "skeleton": {
+        "kind": "surface",
+        "threshold": 700,
+        "color": (0.98, 0.97, 0.92),
+        "opacity": 0.35,
+    },
+}
 
 def normalize_color(color):
     """Normalize an RGB color from [0, 255] to [0, 1]."""
@@ -78,36 +106,7 @@ def create_volume_actor(ct_image, opacity=0.2):
 
     return volume
 
-def create_surface_actor_for_ct(vtk_image, opacity=0.2):
-    """
-    Creates a surface actor for a CT scan using contour filtering for surface extraction.
-    """
-    # Extract surface with a contour filter based on intensity threshold
-
-    skin_extractor = vtkMarchingCubes()
-    skin_extractor.SetInputData(vtk_image)
-    skin_extractor.SetValue(0, 500)  # Adjust threshold based on intensity; 300 is typical for soft tissue
-    colors = vtkNamedColors()
-
-    colors.SetColor('SkinColor', [240, 184, 160, 255])
-    colors.SetColor('BackfaceColor', [255, 229, 200, 255])
-    colors.SetColor('BkgColor', [51, 77, 102, 255])
-
-
-    skin_mapper = vtkPolyDataMapper()
-    skin_mapper.SetInputConnection(skin_extractor.GetOutputPort())
-    skin_mapper.ScalarVisibilityOff()
-
-    skin = vtkActor()
-    skin.SetMapper(skin_mapper)
-    skin.GetProperty().SetDiffuseColor(colors.GetColor3d('SkinColor'))
-
-    back_prop = vtkProperty()
-    back_prop.SetDiffuseColor(colors.GetColor3d('BackfaceColor'))
-    skin.SetBackfaceProperty(back_prop)
-
-    # An outline provides context around the data.
-    #
+def create_outline_actor(vtk_image):
     outline_data = vtkOutlineFilter()
     outline_data.SetInputData(vtk_image)
 
@@ -116,16 +115,40 @@ def create_surface_actor_for_ct(vtk_image, opacity=0.2):
 
     outline = vtkActor()
     outline.SetMapper(map_outline)
-    outline.GetProperty().SetColor(colors.GetColor3d('Black'))
+    outline.GetProperty().SetColor(vtkNamedColors().GetColor3d("Black"))
 
     return outline
+
+
+def create_surface_actor_for_ct(vtk_image, threshold, color, opacity=0.2):
+    """
+    Creates a surface actor for a CT scan using contour filtering for surface extraction.
+    """
+    extractor = vtkMarchingCubes()
+    extractor.SetInputData(vtk_image)
+    extractor.SetValue(0, threshold)
+    extractor.ComputeNormalsOn()
+
+    mapper = vtkPolyDataMapper()
+    mapper.SetInputConnection(extractor.GetOutputPort())
+    mapper.ScalarVisibilityOff()
+
+    actor = vtkActor()
+    actor.SetMapper(mapper)
+    actor.GetProperty().SetColor(color)
+    actor.GetProperty().SetOpacity(opacity)
+
+    back_prop = vtkProperty()
+    back_prop.SetDiffuseColor(color)
+    actor.SetBackfaceProperty(back_prop)
+    return actor
 
 def sitk_to_vtk_image(sitk_image):
     """
     Converts a SimpleITK image to a VTK image data format.
     """
     volume_data = sitk.GetArrayFromImage(sitk_image)
-    vtk_data = numpy_to_vtk(volume_data.ravel(), deep=True, array_type=vtk.VTK_UNSIGNED_CHAR)
+    vtk_data = numpy_to_vtk(volume_data.ravel(), deep=True)
     
     vtk_image = vtk.vtkImageData()
     vtk_image.SetDimensions(volume_data.shape[::-1])
@@ -137,6 +160,25 @@ def sitk_to_vtk_image(sitk_image):
     vtk_image.SetOrigin(origin[2], origin[1], origin[0])
     
     return vtk_image
+
+
+def create_ct_actors(ct_image, presets):
+    vtk_image = sitk_to_vtk_image(ct_image)
+    actors = []
+    for preset_name in presets:
+        preset = CT_PRESETS[preset_name]
+        if preset["kind"] == "outline":
+            actors.append(create_outline_actor(vtk_image))
+        else:
+            actors.append(
+                create_surface_actor_for_ct(
+                    vtk_image,
+                    threshold=preset["threshold"],
+                    color=preset["color"],
+                    opacity=preset["opacity"],
+                )
+            )
+    return actors
 
 def create_actor_for_label(vtk_image, label, color, opacity=0.5):
     """
@@ -177,18 +219,22 @@ def create_actor_for_label(vtk_image, label, color, opacity=0.5):
 
     return actor
 
-def render_volume(segmentation_image,ct_image, output_filename="rendered_image.jpg"):
+def render_volume(
+    segmentation_image,
+    ct_image=None,
+    output_filename="rendered_image.jpg",
+    ct_presets=None,
+):
     """
     Renders multiple labels in a 3D SimpleITK volume, with unique colors for each label.
     """
     vtk_image = sitk_to_vtk_image(segmentation_image)
-    ct_vtk_image = sitk_to_vtk_image(ct_image)
     background_color = vtk.vtkNamedColors().GetColor3d("Cornsilk")
     renderer = vtk.vtkRenderer()
 
-    ct_volume_actor = create_surface_actor_for_ct(ct_vtk_image)
-    renderer.AddVolume(ct_volume_actor)
-
+    if ct_image is not None:
+        for actor in create_ct_actors(ct_image, ct_presets or ["outline"]):
+            renderer.AddActor(actor)
 
     renderer.SetBackground(background_color)
 
@@ -231,96 +277,49 @@ def render_volume(segmentation_image,ct_image, output_filename="rendered_image.j
 
     interactor.Start()
 
-# # Example usage
-#     sitk_image = sitk.Image(50, 50, 50, sitk.sitkUInt8)
-#     sitk_image[10:30, 10:30, 10:30] = 1  # Label 1
-#     sitk_image[35:45, 35:45, 35:45] = 2  # Label 2
-#
-# # Resample to isotropic spacing
-#     isotropic_image = resample_to_isotropic(sitk_image)
-#
-# # Render and save to JPG
+def main():
+    parser = argparse.ArgumentParser(description="Render a 3D visualization for a labelmap.")
+    parser.add_argument("labelmap", help="Path to the segmentation labelmap file.")
+    parser.add_argument(
+        "--ct",
+        dest="ct_path",
+        help="Optional path to a CT image used as rendering context.",
+    )
+    parser.add_argument(
+        "--output",
+        default="rendered_image.jpg",
+        help="Output JPG filename. Default: rendered_image.jpg",
+    )
+    parser.add_argument(
+        "--ct-preset",
+        dest="ct_presets",
+        action="append",
+        choices=sorted(CT_PRESETS.keys()),
+        help="Optional CT rendering preset. Repeat to combine presets, e.g. --ct-preset skeleton --ct-preset skin.",
+    )
+    args = parser.parse_args()
+
+    labelmap = sitk.ReadImage(args.labelmap)
+    ct_image = sitk.ReadImage(args.ct_path) if args.ct_path else None
+    render_volume(
+        labelmap,
+        ct_image=ct_image,
+        output_filename=args.output,
+        ct_presets=args.ct_presets,
+    )
+
+
+# %%
 if __name__ == '__main__':
-    fn = "/s/fran_storage/predictions/litsmc/LITS-1018/crc_CRC215_20150519_ABDOMEN.nii.gz"
-    lm = sitk.ReadImage(fn)
-    fn2 = "/s/xnat_shadow/crc/images/crc_CRC215_20150519_ABDOMEN.nii.gz"
-    im = sitk.ReadImage(fn2)
-# %%
-
-    colors = vtkNamedColors()
-
-    colors.SetColor('SkinColor', [240, 184, 160, 255])
-    colors.SetColor('BackfaceColor', [255, 229, 200, 255])
-    colors.SetColor('BkgColor', [51, 77, 102, 255])
-# Convert SimpleITK image to VTK image
-    sitk_image = im  # Assuming 'im' is your SimpleITK CT image
-    volume_data = sitk.GetArrayFromImage(sitk_image)
-    vtk_data = numpy_to_vtk(volume_data.ravel(), deep=True, array_type=vtk.VTK_FLOAT)
-
-    vtk_image = vtk.vtkImageData()
-    vtk_image.SetDimensions(volume_data.shape[::-1])
-    vtk_image.GetPointData().SetScalars(vtk_data)
-    vtk_image.SetSpacing(sitk_image.GetSpacing()[::-1])  # Set spacing in ZYX order
-    vtk_image.SetOrigin(sitk_image.GetOrigin()[::-1])  # Set origin in ZYX order
-
-# Set up volume rendering properties
-    volume_mapper = vtk.vtkSmartVolumeMapper()
-    volume_mapper.SetInputData(vtk_image)
-
-# Use vtkContourFilter to extract an isosurface at a specific intensity
-# %%
-    contour = vtk.vtkMarchingCubes()
-    contour.SetInputData(vtk_image)
-    contour.SetValue(0, -500)  # Set an intensity threshold; adjust as needed for CT data
-    contour.SetValue(1,-800)
-    # An outline provides context around the data.
-    #
-    outline_data = vtkOutlineFilter()
-    outline_data.SetInputData(vtk_image)
-
-    map_outline = vtkPolyDataMapper()
-    map_outline.SetInputConnection(outline_data.GetOutputPort())
-
-    outline = vtkActor()
-    outline.SetMapper(map_outline)
-    outline.GetProperty().SetColor(colors.GetColor3d('Black'))
-# %%
-# Apply a smoothing filter for a better surface appearance
-
-# Mapper and actor for surface rendering
-    mapper = vtk.vtkPolyDataMapper()
-    mapper.SetInputConnection(contour.GetOutputPort())
-
-    actor = vtk.vtkActor()
-    actor.SetMapper(mapper)
-    actor.GetProperty().SetColor(0.9, 0.9, 0.9)  # Light gray color for CT surface
-    actor.GetProperty().SetOpacity(0.3)  # Set to translucent
-    back_prop = vtkProperty()
-    back_prop.SetDiffuseColor(colors.GetColor3d('BackfaceColor'))
-    actor.SetBackfaceProperty(back_prop)
-# Rendering setup
-    renderer = vtk.vtkRenderer()
-    render_window = vtk.vtkRenderWindow()
-    render_window.AddRenderer(renderer)
-
-    render_window.SetSize(800, 600)
-    interactor = vtk.vtkRenderWindowInteractor()
-    interactor.SetRenderWindow(render_window)
-
-    renderer.AddActor(actor)
-    renderer.AddActor(outline)
-    renderer.SetBackground(1, 1, 1)  # White background
-
-# Adjust camera for a good view
-    camera = renderer.GetActiveCamera()
-    camera.SetPosition(0, -1, 1)
-    camera.SetFocalPoint(0, 0, 0)
-    renderer.ResetCamera()
-
-# Render the surface
+    main()
     render_window.Render()
     interactor.Start()
-# %%
+
+    im_fn = "/s/xnat_shadow/nodes/images/nodes_43_20220805_CAP1p5SoftTissue.nii.gz"
+    lm_fn = "/s/fran_storage/predictions/nodes/LITS-1405_LITS-1416_LITS-1417/nodes_42_20230425_CAP1p5mm.nii.gz"
+    im = sitk.ReadImage(im_fn)
+    lm = sitk.ReadImage(lm_fn)
+    render_volume(lm,im,ct_presets=["skeleton"])
 
 
 # Define opacity transfer function for the volume

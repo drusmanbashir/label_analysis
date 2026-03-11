@@ -1,6 +1,5 @@
 # %%
 import sys
-from radiomics import featureextractor
 
 
 sys.path += ["/home/ub/code"]
@@ -20,6 +19,8 @@ np.set_printoptions(formatter={"float": lambda x: "{0:0.2f}".format(x)})
 
 
 def do_radiomics(img: sitk.Image, lm: sitk.Image, label: int, mask_fn=None, paramsFile=None):
+
+    from radiomics import featureextractor
     if not paramsFile:
         paramsFile = "label_analysis/configs/params.yaml"
     extractor = featureextractor.RadiomicsFeatureExtractor(paramsFile)

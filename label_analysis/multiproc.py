@@ -1,14 +1,18 @@
 # %%
-import os
-
-from label_analysis.geometry import LabelMapGeometry
-from label_analysis.radiomics_setup import *
 import logging
+import os
 import sys
 import time
 from functools import reduce
 
+from fran.managers.project import DS
+from utilz.cprint import cprint
+
+from label_analysis.geometry import LabelMapGeometry
+from label_analysis.geometry_itk import LabelMapGeometryITK
 from label_analysis.helpers import remap_single_label
+from label_analysis.overlap import chunks
+from label_analysis.radiomics_setup import *
 
 sys.path += ["/home/ub/code"]
 import itertools as il
@@ -16,43 +20,182 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import ray
 import SimpleITK as sitk
 from fastcore.basics import GetAttr
-from label_analysis.helpers import *
-
 from utilz.helpers import *
 
-import ray
+from label_analysis.helpers import *
 
+import itk
+itk.MultiThreaderBase.SetGlobalDefaultNumberOfThreads(8)
 if not ray.is_initialized():
     ray.init()
 
 
-@ray.remote(num_cpus=4)
+
+def _concat_valid_frames(frames):
+    valid_frames = []
+    for frame in frames:
+        if frame is None or not isinstance(frame, pd.DataFrame):
+            continue
+        if frame.empty:
+            continue
+        if frame.dropna(axis=1, how="all").empty:
+            continue
+        valid_frames.append(frame)
+
+    if not valid_frames:
+        return pd.DataFrame()
+    return pd.concat(valid_frames, ignore_index=True)
+
+
+def _processing_error_row(gt_fn, err):
+    return pd.DataFrame(
+        [
+            {
+                "lm_filename": gt_fn,
+                "processing_error": True,
+                "error_type": type(err).__name__,
+                "error_message": str(err),
+            }
+        ]
+    )
+
+
+def _process_labelmap_batch_itk(
+    gt_fns,
+    ignore_labels=None,
+    dusting_threshold=0,
+    img_fns=None,
+    do_radiomics=True,
+    params_fn=None,
+):
+    nbrhoods = []
+    if ignore_labels is None:
+        ignore_labels = []
+    if isinstance(gt_fns, (str, Path)):
+        gt_path = Path(gt_fns)
+        gt_fns = list(gt_path.glob("*")) if gt_path.is_dir() else [gt_path]
+    elif not isinstance(gt_fns, list):
+        gt_fns = list(gt_fns)
+    if img_fns is None:
+        img_fns = []
+    elif isinstance(img_fns, (str, Path)):
+        img_path = Path(img_fns)
+        img_fns = list(img_path.glob("*")) if img_path.is_dir() else [img_path]
+    elif not isinstance(img_fns, list):
+        img_fns = list(img_fns)
+    if len(img_fns) == 0 and do_radiomics:
+        cprint(
+            "Warning: no img_files given. Radiomics will not be computed",
+            color="red",
+            bold=True,
+        )
+        do_radiomics = False
+    for gt_fn in gt_fns:
+        if len(img_fns) > 0:
+            img_fn = find_matching_fn(
+                gt_fn, img_fns, tags=["case_id"], allow_multiple_matches=False
+            )
+            img = sitk.ReadImage(img_fn)
+        else:
+            img = None
+        try:
+            L = LabelMapGeometryITK(li=gt_fn, ignore_labels=ignore_labels, img=img)
+            if do_radiomics is True and L.is_empty() is False:
+                L.dust(dusting_threshold=dusting_threshold)
+                L.radiomics(params_fn)
+            L.nbrhoods["lm_filename"] = gt_fn
+            L.nbrhoods["processing_error"] = False
+            L.nbrhoods["error_type"] = None
+            L.nbrhoods["error_message"] = None
+            nbrhoods.append(L.nbrhoods)
+        except Exception as e:
+            logging.exception("Failed processing labelmap file: %s", gt_fn)
+            nbrhoods.append(_processing_error_row(gt_fn, e))
+    return _concat_valid_frames(nbrhoods)
+
+
+@ray.remote(num_cpus=8)
 class LabelMapGeometryRay:
     def __init__(self):
         pass
 
-    def process(self, gt_fns, img_fns, ignore_labels,fn_indices, do_radiomics=True,params_fn=None,):
+    def process(
+        self,
+        gt_fns,
+        ignore_labels=None,
+        dusting_threshold=0,
+        img_fns=None,
+        do_radiomics=True,
+        params_fn=None,
+    ):
         nbrhoods= []
-        if not isinstance(gt_fns, list) and  gt_fns.is_dir():
-            gt_fns = list(gt_fns.glob("*"))
-        if not isinstance(img_fns, list) and img_fns.is_dir():
-            img_fns = list(img_fns.glob("*"))
-        for indx in fn_indices:
-            gt_fn =  gt_fns[indx]
+        if ignore_labels is None:
+            ignore_labels = []
+        if isinstance(gt_fns, (str, Path)):
+            gt_path = Path(gt_fns)
+            gt_fns = list(gt_path.glob("*")) if gt_path.is_dir() else [gt_path]
+        elif not isinstance(gt_fns, list):
+            gt_fns = list(gt_fns)
+        if img_fns is None:
+            img_fns = []
+        elif isinstance(img_fns, (str, Path)):
+            img_path = Path(img_fns)
+            img_fns = list(img_path.glob("*")) if img_path.is_dir() else [img_path]
+        elif not isinstance(img_fns, list):
+            img_fns = list(img_fns)
+        if len(img_fns) == 0 and do_radiomics:
+            cprint("Warning: no img_files given. Radiomics will not be computed",color="red", bold=True)
+            do_radiomics=False
+        for gt_fn in gt_fns:
+            try:
+                if len(img_fns)>0:
+                    img_fn = find_matching_fn(gt_fn, img_fns,tags=['case_id'],allow_multiple_matches=False)
+                    img = sitk.ReadImage(img_fn)
+                else:
+                    img=None
+                L = LabelMapGeometry(lm=gt_fn, ignore_labels=ignore_labels, img=img)
+                if do_radiomics==True and L.is_empty()==False:
+                    L.dust(dusting_threshold=dusting_threshold  )
+                    L.radiomics(params_fn)
+                L.nbrhoods["lm_filename"] = gt_fn
+                L.nbrhoods["processing_error"] = False
+                L.nbrhoods["error_type"] = None
+                L.nbrhoods["error_message"] = None
+                nbrhoods.append(L.nbrhoods)
+            except Exception as e:
+                logging.exception("Failed processing labelmap file: %s", gt_fn)
+                nbrhoods.append(_processing_error_row(gt_fn, e))
 
-            img_fn = find_matching_fn(gt_fn, img_fns,True)
-            img = sitk.ReadImage(img_fn)
-            L = LabelMapGeometry(lm=gt_fn, ignore_labels=ignore_labels, img=img)
-            if do_radiomics==True and L.is_empty()==False:
-                L.dust(3)
-                L.radiomics(params_fn)
-            nbrhoods.append(L.nbrhoods)
-        dfs = pd.concat(nbrhoods, ignore_index=True)
-        return dfs
+        return _concat_valid_frames(nbrhoods)
 
-@ray.remote(num_cpus=4)
+
+@ray.remote(num_cpus=8)
+class LabelMapGeometryRayITK:
+    def __init__(self):
+        pass
+
+    def process(
+        self,
+        gt_fns,
+        ignore_labels=None,
+        dusting_threshold=0,
+        img_fns=None,
+        do_radiomics=True,
+        params_fn=None,
+    ):
+        return _process_labelmap_batch_itk(
+            gt_fns=gt_fns,
+            ignore_labels=ignore_labels,
+            dusting_threshold=dusting_threshold,
+            img_fns=img_fns,
+            do_radiomics=do_radiomics,
+            params_fn=params_fn,
+        )
+
+@ray.remote(num_cpus=8)
 class BatchScorerRay:
     def __init__(self, actor_id):
         self.actor_id = actor_id
@@ -91,13 +234,10 @@ class BatchScorerRay:
 #SECTION:-------------------- SETUP--------------------------------------------------------------------------------------
 if __name__ == "__main__":
 # %%
-    from fran.managers.datasource import _DS
-    DS = _DS()
     preds_fldr = Path(
         "/s/fran_storage/predictions/litsmc/LITS-940_fixed_mc"
     )
     test_lms_fldr = Path("/s/xnat_shadow/crc/lms")
-    train_fldrs = DS.lits['folder'], DS.litq['folder'] , DS.drli['folder'], DS.litqsmall['folder']
     train_lms_fldrs= [Path(fldr)/("lms") for fldr in train_fldrs]
     train_img_fldrs = [Path(fldr)/("images") for fldr in train_fldrs]
     train_img_fns =[list(fldr.glob("*")) for fldr in train_img_fldrs]
@@ -110,31 +250,78 @@ if __name__ == "__main__":
     test_lm_fns =  list(test_lms_fldr.glob("*"))
     test_img_fns =  list(test_imgs_fldr.glob("*"))
 
-# %%
-#SECTION:-------------------- RADIOMICS MUltiprocess Training data--------------------------------------------------------------------------------------
-    indices = range(len(train_lm_fns))
-    # indices = range(24)
-    indices = list(chunks(indices,4))
+    lms_pt_fldr = Path("/r/datasets/preprocessed/lidc/lbd/spc_075_075_075_rlb109adb5e_rlb109adb5e_ex000/lms")
+    lms_pt = list(lms_pt_fldr.glob("*"))
+    lm_fn = lms_pt[0]
 
-    ignore_labels=[1]
-    actors = [LabelMapGeometryRay.remote() for x in range(4)]
+    lm = torch.load(lm_fn,weights_only=False)
+    lm.meta
+# %%
+    DS.lidc
+    lms_lidc = DS.lidc.folder/("lms")
+    fns_lidc = list(lms_lidc.glob("*"))
+# %%
+#SECTION:-------------------- Multiprocess Training data NO RADIOMICS--------------------------------------------------------------------------------------
+    
+    fldr_pt = Path("/r/datasets/preprocessed/lidc/lbd/spc_075_075_075_rlb109adb5e_rlb109adb5e_ex000/lms")
+    fns_pt = list(fldr_pt.glob("*"))
+    fns_pt = ["/media/UB/datasets/kits21/lms/kits21_00018.nii.gz"]
+
+
+    n_actors = 1
+    fns_chunks = list(chunks(fns_pt, n_actors))
+    actors = [LabelMapGeometryRay.remote() for _ in range(n_actors)]
 
 # %%
-    do_radiomics = True
+    ignore_labels = [1]
+    do_radiomics = False
     params_fn = None
-    res = ray.get([c.process.remote(train_lm_fns,train_img_fns,ignore_labels,inds,do_radiomics,params_fn) for c,inds in zip(actors,indices)])
-# %%
-    res.to_csv("results/results_training.csv")
-    resdf = [pd.DataFrame(r) for r in res]
-    resdf = pd.concat(res, ignore_index=True)
-# %%
+    dusting_threshold = 1
 
 # %%
-    fulls =[]
-    for fn in test_lm_fns[:24]:
-        L = LabelMapGeometry(lm=fn, ignore_labels=[1])
-        # L.dust(3)
-        if not L.is_empty():
-            fulls.append(L)
-# %%
+    futures = []
+    for actor, fns_chunk in zip(actors, fns_chunks):
+        res = actor.process.remote(
+            fns_chunk,
+            ignore_labels,
+            dusting_threshold,
+            img_fns=None,
+            do_radiomics=do_radiomics,
+            params_fn=params_fn,
+        )
+        futures.append(res)
 
+    parts = ray.get(futures)
+# %%
+    resdf = pd.concat(parts, ignore_index=True)
+    out_fn = fldr_pt.parent/("lesion_stats.csv")
+
+    resdf['case_id'] = resdf['lm_filename'].apply(split_info)
+    resdf.to_csv( out_fn, index=False)
+
+    df = resdf.groupby("case_id")["volume"].apply(list)
+
+    case_ids= resdf["case_id"].unique()
+
+    grouped = df.copy()
+# %%
+    vol_lists = grouped.tolist()
+
+    max_len = max(len(v) for v in vol_lists)
+
+# pad lists so matrix can be built
+    vol_matrix = []
+    for v in vol_lists:
+        padded = v + [0]*(max_len-len(v))
+        vol_matrix.append(padded)
+
+    vol_matrix = list(zip(*vol_matrix))
+
+# %%
+    import seaborn as sns
+    import math     
+    chunk_size = 50
+    n_chunks = math.ceil(len(case_ids) / chunk_size)
+
+
+# %%

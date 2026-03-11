@@ -17,12 +17,23 @@ import pandas as pd
 import SimpleITK as sitk
 from fastcore.basics import GetAttr
 from utilz.helpers import *
+from utilz.itk_sitk import monai_to_sitk_image
 from utilz.imageviewers import *
 
 from label_analysis.helpers import *
 
 np.set_printoptions(linewidth=250)
 np.set_printoptions(formatter={"float": lambda x: "{0:0.2f}".format(x)})
+
+
+def load_labelmap_like_to_sitk(li):
+    if isinstance(li, sitk.Image):
+        return li, None
+    if isinstance(li, (str, Path)):
+        if str(li).lower().endswith(".pt"):
+            return monai_to_sitk_image(li)
+        return sitk.ReadImage(str(li)), str(li)
+    return monai_to_sitk_image(li)
 
 
 def make_zero_df(colnames):
@@ -51,11 +62,9 @@ class LabelMapGeometry(GetAttr):
     def __init__(self, lm: Union[sitk.Image, str, Path], ignore_labels=[], img=None,compute_feret=True):
 
         # printcpp.say("HO")
-        if isinstance(lm, Path) or isinstance(lm, str):
-            self.lm_fn = lm
-            lm = sitk.ReadImage(lm)
-        else:
-            self.lm_fn = None
+        assert isinstance(ignore_labels, list|None), "ignore_labels must be a list"
+        lm, src = load_labelmap_like_to_sitk(lm)
+        self.lm_fn = src
         self.fil = sitk.LabelShapeStatisticsImageFilter()
         if compute_feret:
             self.fil.ComputeFeretDiameterOn()
@@ -102,14 +111,14 @@ class LabelMapGeometry(GetAttr):
 
     def calc_geom(self):
         columns = [
-            "label",
+            "label_org",
             "label_cc",
             "cent",
             "bbox",
             "flatness",
             "rad",
             "length",
-            "volume",
+            "volume_cc",
         ]
         vals_all = []
         if hasattr(self, "key"):
@@ -178,7 +187,7 @@ class LabelMapGeometry(GetAttr):
         labs_cc = self.nbrhoods["label_cc"]
         if len(labs_cc) > 0:
             rads = radiomics_multiprocess(
-                self.img, self.lm_cc, labs_cc, self.lm_fn, params_fn=params_fn
+                self.img, self.lm_cc_sitk, labs_cc, self.lm_fn, params_fn=params_fn
             )
             mini_df = pd.DataFrame(rads)
             self.nbrhoods = self.nbrhoods.merge(
@@ -225,6 +234,11 @@ class LabelMapGeometry(GetAttr):
     @property
     def centroids(self):
         return [np.array(self.fil.GetCentroid(x)) for x in self.labels]
+
+    @property
+    def lm_cc_sitk(self):
+        # Base implementation: lm_cc is already a SimpleITK image.
+        return self.lm_cc
 
 
 # %%
@@ -345,6 +359,8 @@ if __name__ == "__main__":
     labs_cc = L.nbrhoods["label_cc"]
     params_fn = None
     for lab in labs_cc:
+        from label_analysis.radiomics_setup import do_radiomics
+
         rads = do_radiomics(L.img, L.lm_cc, lab, L.lm_fn, paramsFile=params_fn)
 # %%
     # rads = radiomics_multiprocess(L.img,L.lm_cc,labs_cc,L.lm_fn,params_fn = params_fn)
@@ -399,3 +415,4 @@ if __name__ == "__main__":
     get_labels(lm_bin)
     sitk.WriteImage(lm_bin,"/home/ub/lm_bin2.nii.gz")
     sitk.WriteImage(L.lm_cc,"lmcc.nii.gz")
+# %%

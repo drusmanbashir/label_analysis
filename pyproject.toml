@@ -19,7 +19,6 @@ dependencies = [
   "fasttransform",
   "scipy",
   "vtk>=9.3.1",
-
   "utilz @ git+https://github.com/drusmanbashir/utilz.git@main",
 ]
 
