@@ -4,12 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pandas as pd
-import SimpleITK as sitk
 from fran.data.dataregistry import DS
 
-from label_analysis.helpers import get_labels, relabel
-from label_analysis.merge import merge
-from label_analysis.overlap import fk_generator
 
 
 #
