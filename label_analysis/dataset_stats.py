@@ -1,24 +1,15 @@
-import logging
 import os
+import errno
 import sys
-import time
-from functools import reduce
 
+from utilz.cprint import cprint
 from utilz.fileio import maybe_makedirs
 
-from fran.managers.project import DS
-from utilz.cprint import cprint
-
-from label_analysis.geometry import LabelMapGeometry
-from label_analysis.geometry_itk import LabelMapGeometryITK
-from label_analysis.helpers import remap_single_label
-from label_analysis.multiproc import LabelMapGeometryRayITK
-from label_analysis.multiproc import _concat_valid_frames
-from label_analysis.multiproc import _process_labelmap_batch_itk
+from label_analysis.multiproc import (LabelMapGeometryRayITK,
+                                      _concat_valid_frames)
 from label_analysis.overlap import chunks
 
 sys.path += ["/home/ub/code"]
-import itertools as il
 import math
 import os
 from pathlib import Path
@@ -27,9 +18,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import ray
-import seaborn as sns
-import SimpleITK as sitk
-from fastcore.basics import GetAttr
 from utilz.helpers import *
 
 from label_analysis.helpers import *
@@ -44,7 +32,7 @@ def split_info(full_filename_posix):
 def lms_folder_statistics(
     input_folder, output_folder=None, ignore_labels=[], dusting_threshold=0
 ):
-    if ignore_labels :
+    if ignore_labels:
         assert isinstance(ignore_labels, list), "ignore_labels must be a list"
     input_folder = Path(input_folder)
     if output_folder is None:
@@ -54,7 +42,7 @@ def lms_folder_statistics(
     if len(fns_pt) == 0:
         raise ValueError(f"No files found in input folder: {input_folder}")
 
-    n_actors = 6
+    n_actors = 8
     fns_chunks = list(chunks(fns_pt, n_actors))
     fns_chunks = [chunk for chunk in fns_chunks if len(chunk) > 0]
 
@@ -86,13 +74,7 @@ def lms_folder_statistics(
     if has_actor_errors:
         err_rows = resdf[resdf["processing_error"].fillna(False).astype(bool)]
         err_counts = err_rows["error_type"].value_counts(dropna=False).to_dict()
-        sample_msgs = (
-            err_rows["error_message"]
-            .dropna()
-            .astype(str)
-            .head(3)
-            .tolist()
-        )
+        sample_msgs = err_rows["error_message"].dropna().astype(str).head(3).tolist()
         pipeline_msg = (
             "Stopped: one or more actor tasks failed. "
             f"error_type_counts={err_counts}. "
@@ -118,7 +100,9 @@ def plot_lesion_volume_distributions(
 
     os.makedirs(output_folder, exist_ok=True)
 
-    def _pick_first_existing(columns: list[str], candidates: list[str], kind: str) -> str:
+    def _pick_first_existing(
+        columns: list[str], candidates: list[str], kind: str
+    ) -> str:
         for col in candidates:
             if col in columns:
                 return col
@@ -251,14 +235,18 @@ def plot_lesion_volume_distributions(
 
 
 def end2end_lms_stats_and_plots(
-    input_folder, output_folder=None, ignore_labels=None, dusting_threshold=0
+    lis_folder, output_folder=None, ignore_labels=None, dusting_threshold=0
 ):
-    input_folder = Path(input_folder)
-    output_folder = Path(output_folder) if output_folder else input_folder.parent / "label_analysis"
+    lis_folder = Path(lis_folder)
+    output_folder = (
+        Path(output_folder) if output_folder else lis_folder.parent / "dataset_stats"
+    )
     output_folder.mkdir(parents=True, exist_ok=True)
+    if any(output_folder.iterdir()):
+          raise OSError(errno.ENOTEMPTY, "Directory not empty", str(output_folder))
     ignore_labels = [] if ignore_labels is None else ignore_labels
     df = lms_folder_statistics(
-        input_folder=input_folder,
+        input_folder=lis_folder,
         output_folder=output_folder,
         ignore_labels=ignore_labels,
         dusting_threshold=dusting_threshold,
@@ -282,37 +270,66 @@ def end2end_lms_stats_and_plots(
 
 # %%
 if __name__ == "__main__":
+
+    from fran.managers.project import DS
     fldr_pt = Path(
         "/r/datasets/preprocessed/kits/lbd/spc_080_080_150_rlb00ec4022_rlb00ec4022_ex050/lms"
     )
-    fldr_lidc= Path("/media/UB/datasets/lidc/lms")
+    fldr_lidc = Path("/media/UB/datasets/lidc/lms")
     output_fldr = fldr_pt.parent / ("label_analysis")
     output_lidc = fldr_lidc.parent / ("label_analysis")
-    df = lms_folder_statistics(fldr_lidc,None, dusting_threshold=1, ignore_labels=[])
+    df = lms_folder_statistics(fldr_lidc, None, dusting_threshold=1, ignore_labels=[])
 # %%
-# %%
-#SECTION:-------------------- end to end pipeline--------------------------------------------------------------------------------------
+    fldrs=[]
+    ignore_labels_lidc = []
+    main_fldr = Path("/r/datasets/preprocessed/lidc")
+    for fldr_name in main_fldr.rglob("*"):
+        if "lms" in fldr_name.name and fldr_name.is_dir():
+            fldrs.append(fldr_name)
 
-    end2end_lms_stats_and_plots(input_folder="/media/UB/datasets/kits21/lms",ignore_labels=[1], dusting_threshold=1)
+# %%
+    for fldr in fldrs:
+        end2end_lms_stats_and_plots(
+            lis_folder=fldr,
+            ignore_labels=ignore_labels_lidc,
+            dusting_threshold=1,)
+# %%
+# SECTION:-------------------- end to end pipeline-------------------------------------------------------------------------------------- <CR>
+    
 # %%
 # %%
-#SECTION:-------------------- LIDC--------------------------------------------------------------------------------------
+# SECTION:-------------------- LIDC-------------------------------------------------------------------------------------- <CR>
 
+    if not ray.is_initialized():
+        ray.init()
     DS.lidc2
-    end2end_lms_stats_and_plots(input_folder="/media/UB/datasets/kits21/lms",ignore_labels=[1], dusting_threshold=1)
+    end2end_lms_stats_and_plots(
+        lis_folder="/media/UB/datasets/lidc2/lms_filled",
+        ignore_labels=[1],
+        dusting_threshold=1,
+        output_folder="/media/UB/datasets/lidc2/dataset_stats_filled",
+    )
+# %%
     df = lms_folder_statistics(
-        fldr_pt,output_lidc , dusting_threshold=1, ignore_labels=[]
+        fldr_pt, output_lidc, dusting_threshold=1, ignore_labels=[]
     )
 # %%
     plot_lesion_volume_distributions(df, output_lidc)
-# %%
+    import seaborn as sns
 
+# %%
+    df_fn = "/media/UB/datasets/kits23/dataset_stats/lesion_stats.csv"
+
+    df = pd.read_csv(df_fn)
+    ser = df.groupby("case_id").size()
+    ser.sort_values(ascending=False)
+    sns.histplot(ser)
 # %%
 
     csv_fn = Path(
         "/r/datasets/preprocessed/lidc/lbd/spc_075_075_075_rlb109adb5e_rlb109adb5e_ex000/label_stats/lesion_stats.csv"
     )
-    csv_fn  = "/media/UB/datasets/kits21/label_analysis/lesion_stats.csv"
+    csv_fn = "/media/UB/datasets/kits23/label_analysis/lesion_stats.csv"
     df = pd.read_csv(csv_fn)
     counts = df.groupby("case_id").size()
     counts = counts.sort_values(ascending=False)

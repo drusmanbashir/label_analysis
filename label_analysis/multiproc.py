@@ -5,13 +5,12 @@ import sys
 import time
 from functools import reduce
 
-from fran.managers.project import DS
 from utilz.cprint import cprint
 
 from label_analysis.geometry import LabelMapGeometry
 from label_analysis.geometry_itk import LabelMapGeometryITK
 from label_analysis.helpers import remap_single_label
-from label_analysis.overlap import chunks
+from label_analysis.overlap import BatchScorer2, chunks
 from label_analysis.radiomics_setup import *
 
 sys.path += ["/home/ub/code"]
@@ -29,8 +28,6 @@ from label_analysis.helpers import *
 
 import itk
 itk.MultiThreaderBase.SetGlobalDefaultNumberOfThreads(8)
-if not ray.is_initialized():
-    ray.init()
 
 
 
@@ -117,7 +114,7 @@ def _process_labelmap_batch_itk(
     return _concat_valid_frames(nbrhoods)
 
 
-@ray.remote(num_cpus=8)
+@ray.remote(num_cpus=4)
 class LabelMapGeometryRay:
     def __init__(self):
         pass
@@ -172,7 +169,7 @@ class LabelMapGeometryRay:
         return _concat_valid_frames(nbrhoods)
 
 
-@ray.remote(num_cpus=8)
+@ray.remote(num_cpus=4)
 class LabelMapGeometryRayITK:
     def __init__(self):
         pass
@@ -195,7 +192,7 @@ class LabelMapGeometryRayITK:
             params_fn=params_fn,
         )
 
-@ray.remote(num_cpus=8)
+@ray.remote(num_cpus=4)
 class BatchScorerRay:
     def __init__(self, actor_id):
         self.actor_id = actor_id
@@ -234,6 +231,8 @@ class BatchScorerRay:
 #SECTION:-------------------- SETUP--------------------------------------------------------------------------------------
 if __name__ == "__main__":
 # %%
+
+    from fran.managers.project import DS
     preds_fldr = Path(
         "/s/fran_storage/predictions/litsmc/LITS-940_fixed_mc"
     )
@@ -242,19 +241,19 @@ if __name__ == "__main__":
     train_img_fldrs = [Path(fldr)/("images") for fldr in train_fldrs]
     train_img_fns =[list(fldr.glob("*")) for fldr in train_img_fldrs]
     train_img_fns = list(il.chain.from_iterable(train_img_fns))
-    train_lm_fns = [list(fldr.glob("*")) for fldr in train_lms_fldrs]
-    train_lm_fns = list(il.chain.from_iterable(train_lm_fns))
+    train_li_fns = [list(fldr.glob("*")) for fldr in train_lms_fldrs]
+    train_li_fns = list(il.chain.from_iterable(train_li_fns))
 
     test_imgs_fldr = Path("/s/xnat_shadow/crc/images")
     pred_fns = list(preds_fldr.glob("*"))
-    test_lm_fns =  list(test_lms_fldr.glob("*"))
+    test_li_fns =  list(test_lms_fldr.glob("*"))
     test_img_fns =  list(test_imgs_fldr.glob("*"))
 
     lms_pt_fldr = Path("/r/datasets/preprocessed/lidc/lbd/spc_075_075_075_rlb109adb5e_rlb109adb5e_ex000/lms")
     lms_pt = list(lms_pt_fldr.glob("*"))
-    lm_fn = lms_pt[0]
+    li_fn = lms_pt[0]
 
-    lm = torch.load(lm_fn,weights_only=False)
+    lm = torch.load(li_fn,weights_only=False)
     lm.meta
 # %%
     DS.lidc
@@ -263,9 +262,9 @@ if __name__ == "__main__":
 # %%
 #SECTION:-------------------- Multiprocess Training data NO RADIOMICS--------------------------------------------------------------------------------------
     
+    fns_pt = ["/media/UB/datasets/kits23/lms/kits23_00018.nii.gz"]
     fldr_pt = Path("/r/datasets/preprocessed/lidc/lbd/spc_075_075_075_rlb109adb5e_rlb109adb5e_ex000/lms")
     fns_pt = list(fldr_pt.glob("*"))
-    fns_pt = ["/media/UB/datasets/kits21/lms/kits21_00018.nii.gz"]
 
 
     n_actors = 1

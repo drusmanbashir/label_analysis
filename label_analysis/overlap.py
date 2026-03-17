@@ -1,11 +1,15 @@
 # %%
-from utilz.dictopts import key_from_value
 import sys
 from functools import reduce
 
 import networkx as nx
-from label_analysis.geometry import LabelMapGeometry
+from utilz.cprint import cprint
+from utilz.dictopts import key_from_value
+
+from label_analysis.geometry import (LabelMapGeometry,
+                                     load_labelmap_like_to_sitk)
 from label_analysis.geometry_itk import LabelMapGeometryITK
+from label_analysis.geometry_pt import LabelMapGeometryPT
 
 sys.path += ["/home/ub/code"]
 import itertools as il
@@ -15,20 +19,19 @@ import numpy as np
 import pandas as pd
 import SimpleITK as sitk
 from fastcore.basics import store_attr
-from label_analysis.helpers import *
-
 from utilz.fileio import load_json, maybe_makedirs
 from utilz.helpers import *
 from utilz.imageviewers import *
-from utilz.stringz import (
-    info_from_filename,
-    match_filenames,
-)
+from utilz.stringz import info_from_filename, match_filenames
+
+from label_analysis.helpers import *
 
 np.set_printoptions(linewidth=250)
 np.set_printoptions(formatter={"float": lambda x: "{0:0.2f}".format(x)})
 
-
+pd.set_option("display.width", 200)           # total line width before
+pd.set_option("display.max_columns", None)    # show all columns
+pd.set_option("display.max_colwidth", 25)     # truncate long cell contents
 
 def fk_generator(start=0):
     key = start
@@ -133,7 +136,6 @@ def get_all_nbrhoods(labelmap, dusting_threshold=5):
     return df_final
 
 
-
 class ScorerLabelMaps:
     """
     input image, mask, and prediction to compute total dice, lesion-wise dice,  and lesion-wise radiomics (based on mask)
@@ -172,7 +174,6 @@ class ScorerLabelMaps:
 
     @property
     def empty_lm(self):
-
         if len(self.LG.lengths) == 0 and len(self.LP.lengths) == 0:
             return "both"
         elif (len(self.LG) == 0) ^ (len(self.LP) == 0):
@@ -185,13 +186,11 @@ class ScorerLabelMaps:
         # predicted labels <threshold max_dia will be erased
         print("Dusting GT")
         self.LG.dust(self.dusting_threshold)  # sanity check
-        print("-"*20)
+        print("-" * 20)
         print("Dusting Pred")
         self.LP.dust(self.dusting_threshold)
-        print("-"*20)
+        print("-" * 20)
 
-        self.labs_pred = self.LP.labels
-        self.labs_gt = self.LG.labels
 
     def compute_overlap_overall(self):
         if self.empty_lm == "both":
@@ -201,7 +200,7 @@ class ScorerLabelMaps:
             self.dsc_overall, self.jac_overall = 0.0, 0.0
         else:
             self.dsc_overall, self.jac_overall = labels_overlap(
-                self.LG.lm_binary, self.LP.lm_binary, 1, 1
+                self.LG.li_binary, self.LP.li_binary, 1, 1
             )
 
     def compute_overlap_perlesion(self):
@@ -209,7 +208,9 @@ class ScorerLabelMaps:
         # get jaccard and dice
 
         prox_labels, prox_inds = self.get_neighbr_labels()
-        self.LG_ind_cc_pairing = {a[0]: b[0] for a, b in zip(prox_inds, prox_labels)} # lesion ind and matching label 
+        self.LG_ind_cc_pairing = {
+            a[0]: b[0] for a, b in zip(prox_inds, prox_labels)
+        }  # lesion ind and matching label
         self.LP_ind_cc_pairing = {a[1]: b[1] for a, b in zip(prox_inds, prox_labels)}
 
         self.dsc = np.zeros(
@@ -217,7 +218,7 @@ class ScorerLabelMaps:
         ).transpose()  # max(1,x) so that an empty matrix is not created
         self.jac = np.copy(self.dsc)
         if self.empty_lm == "neither":
-            args = [[self.LG.lm_cc, self.LP.lm_cc, *a] for a in prox_labels]
+            args = [[self.LG.li_cc_sitk, self.LP.li_cc_sitk, *a] for a in prox_labels]
 
             d = multiprocess_multiarg(
                 labels_overlap, args, 16, False, False, progress_bar=True
@@ -290,7 +291,7 @@ class ScorerLabelMaps:
 
             radiomics = radiomics_multiprocess(
                 self.img,
-                self.LG.lm_cc,
+                self.LG.li_cc_sitk,
                 self.labs_gt,
                 self.gt_fn,
                 self.params_fn,
@@ -354,6 +355,12 @@ class ScorerLabelMaps:
                 df.drop([i], inplace=True)
         return df
 
+    @property
+    def labs_gt(self):
+        return self.LG.labels
+    @property
+    def labs_pred(self):
+        return self.LP.labels
 
 class ScorerFiles(ScorerLabelMaps):
     """
@@ -408,8 +415,12 @@ class ScorerFiles(ScorerLabelMaps):
             self.cont_tables()
             return self.create_df_full()
 
-        except:
-            logging.error("Error processing {}".format(self.gt_fn))
+        except Exception as e:
+            msg = "Error processing case_id={} gt_fn={} pred_fn={}".format(
+                self.case_id, self.gt_fn, self.pred_fn
+            )
+            logging.exception(msg)
+            raise RuntimeError(msg) from e
 
     def make_one_to_one_dsc(self):
         dsc_cp = self.dsc.copy()
@@ -615,7 +626,7 @@ class ScorerAdvanced(ScorerFiles):
         return remapping, dest_labels
 
     def _dsc_multilabel(self, prox_labels):
-        args = [[self.LG.lm_cc, self.LP.lm_cc, *a] for a in prox_labels]
+        args = [[self.LG.li_cc_sitk, self.LP.li_cc_sitk, *a] for a in prox_labels]
         d = multiprocess_multiarg(
             labels_overlap, args, 8, False, False, progress_bar=True
         )  # multiprocess i s slow
@@ -623,24 +634,26 @@ class ScorerAdvanced(ScorerFiles):
 
     def recompute_overlap_perlesion(self):
         r = self.dsc.shape[0]
-        self.dsc.shape[1]
+        s = self.dsc.shape[1]
         gt_labs = self.LG.nbrhoods["label_cc"].tolist()
-        gt_labs = "gt_lab_"+ self.LG.nbrhoods["label_cc"].astype(str)
+        gt_labs = "gt_lab_" + self.LG.nbrhoods["label_cc"].astype(str)
         gt_labs = []
-        pred_labs ="pred_lab_"+  self.LP.nbrhoods["label_cc"].astype(str)
+        pred_labs = "pred_lab_" + self.LP.nbrhoods["label_cc"].astype(str)
         G = nx.Graph()
         G.add_nodes_from(gt_labs, bpartite=0)
         G.add_nodes_from(pred_labs, bpartite=1)
         edge_sets = []
         for row in range(r):
             if row in self.LG_ind_cc_pairing.keys():
-                gt_lab = "gt_lab_"+str(self.LG_ind_cc_pairing[row])
+                gt_lab = "gt_lab_" + str(self.LG_ind_cc_pairing[row])
                 edges = np.argwhere(self.dsc[row, :]).flatten().tolist()
-                pred_labs= ["pred_lab_" + str(self.LP_ind_cc_pairing[ind]) for ind in edges]
+                pred_labs = [
+                    "pred_lab_" + str(self.LP_ind_cc_pairing[ind]) for ind in edges
+                ]
                 gt_ind_2_preds = [(gt_lab, pred_lab) for pred_lab in pred_labs]
                 edge_sets.extend(gt_ind_2_preds)
             else:
-                pass # This index LG has no overlapping pred
+                pass  # This index LG has no overlapping pred
         G.add_edges_from(edge_sets)
         con = nx.connected_components(G)
         ccs = list(con)
@@ -693,7 +706,6 @@ class ScorerAdvanced(ScorerFiles):
         self.df2.loc[self.df2["fk"].isin(redsc_labels), "dsc"] = self.dsc_multi
 
     def insert_fks(self, nbrhoods, label_key):
-
         colnames = ["label", "cent", "length", "volume", "label_cc", "fk"]
         dfs = []
         for i in range(len(self.df2)):
@@ -702,7 +714,6 @@ class ScorerAdvanced(ScorerFiles):
             fk = cluster["fk"]
             row = nbrhoods.loc[nbrhoods["label_cc"].isin(labels)]
             # if len(labels)>1:
-            #     tr()
             #     label_dom = [row['label'].max()]
             #     cent = [row['cent'].tolist()[0]]
             #     length = [row['length'].sum()]
@@ -715,10 +726,12 @@ class ScorerAdvanced(ScorerFiles):
             df_mini = df_mini.assign(fk=fk)
             dfs.append(df_mini)
         df_matched = pd.concat(dfs, axis=0)
-        matched_labels = set(df_matched['label_cc'].tolist())
-        unmatched_labels = set(nbrhoods['label_cc'].tolist()) - matched_labels
-        df_unmatched =nbrhoods.loc[nbrhoods['label_cc'].isin(unmatched_labels), colnames]
-        df_output=pd.concat([df_matched,df_unmatched],axis = 0)
+        matched_labels = set(df_matched["label_cc"].tolist())
+        unmatched_labels = set(nbrhoods["label_cc"].tolist()) - matched_labels
+        df_unmatched = nbrhoods.loc[
+            nbrhoods["label_cc"].isin(unmatched_labels), colnames
+        ]
+        df_output = pd.concat([df_matched, df_unmatched], axis=0)
         return df_output
 
     def insert_dsc_fks(self):
@@ -763,23 +776,137 @@ class ScorerAdvanced(ScorerFiles):
         self.df_final = self.cleanup(df)
         return self.df_final
 
+    def generate_fake_df2(self):
+            fake_labels = {
+                    "fk" :-3,    # # # any fk -3 rows should be removed
+                "pred_label_cc": None,
+                "gt_label_cc": None,
+                "recompute_dsc": False,
+                "dsc": None,
+            }
+            self.df2 = pd.DataFrame(fake_labels, index=[0])
+
+
+
     def process(self, debug=False):
-        try:
             print("Processing {}".format(self.case_id))
             self.dust()
             self.compute_overlap_overall()
             if self.empty_lm == "neither":
                 self.compute_overlap_perlesion()
                 self.recompute_overlap_perlesion()
-            self.gt_radiomics(debug)
             self.insert_dsc_fks()
-            return self.create_df_full()
-        except:
-            logging.error("Error processing {}".format(self.gt_fn))
-            raise ValueError
+            # else:
+            #     self.generate_fake_df2()
+            self.gt_radiomics(debug)
+            df = self.create_df_full()
+            return df
+        
+
+class ScorerAdvancedITK(ScorerAdvanced):
+    geometry_cls = LabelMapGeometryITK
+
+    def __init__(
+        self,
+        gt_fn: Union[str, Path],
+        pred_fn: Union[str, Path],
+        img_fn: Union[str, Path] = None,
+        case_id=None,
+        params_fn=None,
+        ignore_labels_gt=[],
+        ignore_labels_pred=[],
+        detection_threshold=0.2,
+        dusting_threshold=0,
+        do_radiomics=False,
+        save_matrices=True,
+        results_folder=None,
+    ) -> None:
+        if not img_fn:
+            assert do_radiomics == False, "To do_radiomics, provide img_fn"
+        gt_fn, pred_fn = Path(gt_fn), Path(pred_fn)
+        if case_id is None:
+            self.case_id = info_from_filename(gt_fn.name, full_caseid=True)["case_id"]
+        else:
+            self.case_id = case_id
+        self.gt = gt_fn
+        self.pred = pred_fn
+        self.img = load_labelmap_like_to_sitk(img_fn)[0] if img_fn else None
+
+        self.LG = self.geometry_cls(gt_fn, ignore_labels_gt)
+        self.LP = self.geometry_cls(pred_fn, ignore_labels_pred)
+        if not results_folder:
+            results_folder = "results"
+        print("Dusting threshold {}".format(dusting_threshold))
+        store_attr(but="case_id")
+
+    def compute_overlap_perlesion(self):
+        print("Computing label jaccard and dice scores")
+        prox_labels, prox_inds = self.get_neighbr_labels()
+        self.LG_ind_cc_pairing = {a[0]: b[0] for a, b in zip(prox_inds, prox_labels)}
+        self.LP_ind_cc_pairing = {a[1]: b[1] for a, b in zip(prox_inds, prox_labels)}
+
+        self.dsc = np.zeros([max(1, len(self.LP)), max(1, len(self.LG))]).transpose()
+        self.jac = np.copy(self.dsc)
+        if self.empty_lm == "neither":
+            args = [[self.LG.li_cc_sitk, self.LP.li_cc_sitk, *a] for a in prox_labels]
+            d = multiprocess_multiarg(
+                labels_overlap, args, 16, False, False, progress_bar=True
+            )
+
+            for i, sc in enumerate(d):
+                ind_pair = list(prox_inds[i])
+                self.dsc[ind_pair[0], ind_pair[1]] = sc[0]
+                self.jac[ind_pair[0], ind_pair[1]] = sc[1]
+
+
+    def insert_fks(self, nbrhoods, label_key):
+        colnames = ["label", "cent", "major_axis", "volume_cc", "label_cc", "fk", "feret"]
+        dfs = []
+        for i in range(len(self.df2)):
+            cluster = self.df2.iloc[i]
+            labels = cluster[label_key]
+            fk = cluster["fk"]
+            row = nbrhoods.loc[nbrhoods["label_cc"].isin(labels)]
+            # if len(labels)>1:
+            #     tr()
+            #     label_dom = [row['label'].max()]
+            #     cent = [row['cent'].tolist()[0]]
+            #     length = [row['length'].sum()]
+            #     volume = [row['volume'].sum()]
+            #     df_dict = {'label':label_dom, 'cent':cent,'length':length, 'volume':volume,'label_cc':fk ,'fk':fk}
+            #     df_mini = pd.DataFrame(df_dict)
+            #     dfs.append(df_mini)
+            # elif len(labels)==1:
+            df_mini = row[colnames]
+            df_mini = df_mini.assign(fk=fk)
+            dfs.append(df_mini)
+        df_matched = pd.concat(dfs, axis=0)
+        matched_labels = set(df_matched["label_cc"].tolist())
+        unmatched_labels = set(nbrhoods["label_cc"].tolist()) - matched_labels
+        df_unmatched = nbrhoods.loc[
+            nbrhoods["label_cc"].isin(unmatched_labels), colnames
+        ]
+        df_output = pd.concat([df_matched, df_unmatched], axis=0)
+        return df_output
+
+
+    def compute_overlap_overall(self):
+        if self.empty_lm == "both":
+            self.dsc_overall, self.jac_overall = np.nan, np.nan
+
+        elif self.empty_lm == "one":
+            self.dsc_overall, self.jac_overall = 0.0, 0.0
+        else:
+            self.dsc_overall, self.jac_overall = labels_overlap(
+                self.LG.li_binary_sitk, self.LP.li_binary_sitk, 1, 1
+            )
+class ScorerAdvancedPT(ScorerAdvancedITK):
+    geometry_cls = LabelMapGeometryPT
 
 
 class BatchScorer:
+    scorer_cls = ScorerAdvanced
+
     def __init__(
         self,
         gt_fns: Union[Path, list],
@@ -813,18 +940,26 @@ class BatchScorer:
         for fn_dict in self.file_dicts:
             gt_fn, pred_fn, img_fn = fn_dict.values()
             print("processing {}".format(gt_fn))
-            S = ScorerAdvanced(
-                gt_fn=gt_fn,
-                img_fn=img_fn,
-                pred_fn=pred_fn,
-                ignore_labels_gt=self.ignore_labels_gt,
-                ignore_labels_pred=self.ignore_labels_pred,
-                case_id=None,
-                save_matrices=False,
-                do_radiomics=self.do_radiomics,
-                dusting_threshold=self.dusting_threshold,
-            )
-            df = S.process(debug=self.debug)
+            try:
+                self.S = self.scorer_cls(
+                    gt_fn=gt_fn,
+                    img_fn=img_fn,
+                    pred_fn=pred_fn,
+                    ignore_labels_gt=self.ignore_labels_gt,
+                    ignore_labels_pred=self.ignore_labels_pred,
+                    case_id=None,
+                    save_matrices=False,
+                    do_radiomics=self.do_radiomics,
+                    dusting_threshold=self.dusting_threshold,
+                )
+                df = self.S.process(debug=self.debug)
+            except Exception as e:
+                        msg = "Error processing case_id={} gt_fn={} pred_fn={}".format(
+                            self.S.case_id, self.S.gt_fn, self.S.pred_fn
+                        )
+                        logging.exception(msg)
+                        raise RuntimeError(msg) from e
+
             self.dfs.append(df)
             self.store_tmp_df()
         df_final = self.finalise_df(self.dfs)
@@ -846,7 +981,7 @@ class BatchScorer:
     def match_filenames(self, gt_fns):
         pred_fns = list(self.preds_fldr.glob("*"))
         if self.imgs_fldr:
-            img_fns = list(imgs_fldr.glob("*.*"))
+            img_fns = list(self.imgs_fldr.glob("*.*"))
         else:
             img_fns = None
         file_dicts = []
@@ -854,7 +989,8 @@ class BatchScorer:
             case_id = info_from_filename(gt_fn.name, full_caseid=True)["case_id"]
             pred_fn = [fn for fn in pred_fns if case_id in fn.name]
             if len(pred_fn) != 1:
-                tr()
+                cprint(f"Multiple predictions for {pred_fn}",color="red")
+                raise RuntimeError
             else:
                 pred_fn = pred_fn[0]
             fn_dict = {"gt_fn": gt_fn, "pred_fn": pred_fn, "img_fn": None}
@@ -957,52 +1093,41 @@ class BatchScorer2(BatchScorer):
         return output_fn
 
 
-#
-# B2 = BatchScorer2(1,*argi)
-# df = B2.process()
-# class BatchActor():
-#     def __init__(self,actor_id):self.actor_id =actor_id
-#
-#     def process(self,
-#         gt_fns,
-#         preds_fldr,
-#         ignore_labels_gt=[],
-#         ignore_labels_pred=[],
-#         imgs_fldr=None,
-#         partial_df=None,
-#         debug=False,
-#         do_radiomics=False,
-#         dusting_threshold=0,
-#                 output_fldr=None):
-#         B = BatchScorerRay(gt_fns=gt_fns, preds_fldr=preds_fldr, partial_df=partial_df, imgs_fldr=imgs_fldr,ignore_labels_gt=ignore_labels_gt,ignore_labels_pred=ignore_labels_pred,do_radiomics=do_radiomics,dusting_threshold=dusting_threshold, debug=debug)
+class BatchScorerITK(BatchScorer2):
+    scorer_cls = ScorerAdvancedITK
 
+
+class BatchScorerPT(BatchScorerITK):
+    scorer_cls = ScorerAdvancedPT
 
 if __name__ == "__main__":
-# %%
-# SECTION:-------------------- SETUP-------------------------------------------------------------------------------------- <CR> <CR>
+# SECTION:-------------------- SETUP-------------------------------------------------------------------------------------- <CR> <CR> <CR>
     preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc")
     preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-1018_fixed_mc")
     res_fldr = preds_fldr / "results"
     gt_fldr = Path("/s/xnat_shadow/crc/lms")
-    fns =list(res_fldr.glob("*csv"))
+    fns = list(res_fldr.glob("*csv"))
 
     gt_fns = list(gt_fldr.glob("*"))
-
 
 # %%
 
     lm_fn = "/home/ub/code/label_analysis/label_analysis/files/two_lesions.nrrd"
-    cc_fn  = "/home/ub/code/label_analysis/label_analysis/files/two_lesions_cc.mrk.json"
-    point_fn = "/home/ub/code/label_analysis/label_analysis/files/two_lesions_point.mrk.json"
+    cc_fn = "/home/ub/code/label_analysis/label_analysis/files/two_lesions_cc.mrk.json"
+    point_fn = (
+        "/home/ub/code/label_analysis/label_analysis/files/two_lesions_point.mrk.json"
+    )
     lm = sitk.ReadImage(lm_fn)
 
     cc = load_json(cc_fn)
     point = load_json(point_fn)
     L = LabelMapGeometry(lm)
-    L.nbrhoods 
+    L.nbrhoods
     L.fil.ComputeOrientedBoundingBoxOn()
     L.Execute(L.lm_cc)
-    sitk.WriteImage(L.lm_cc,"/home/ub/code/label_analysis/label_analysis/files/two_lesions_cc.nii")
+    sitk.WriteImage(
+        L.lm_cc, "/home/ub/code/label_analysis/label_analysis/files/two_lesions_cc.nii"
+    )
 # %%
 
     L = LabelMapGeometryITK(lm)
@@ -1010,15 +1135,14 @@ if __name__ == "__main__":
     L.lm_org.GetSpacing()
     L.fil.GetBoundingBox(1)
 
-    print(org1,"\n",bb1)
-    
-    org2 =L.fil.GetOrientedBoundingBoxOrigin(2)
+    print(org1, "\n", bb1)
+
+    org2 = L.fil.GetOrientedBoundingBoxOrigin(2)
     bb2 = L.fil.GetOrientedBoundingBoxSize(2)
-    bb2_end = [a+b for a,b in zip(org2,bb2)]
+    bb2_end = [a + b for a, b in zip(org2, bb2)]
     # L.fil.GetOrientedBoundingBoxDirection(2)
 
-    print(org2,"\n", bb2,"\n",bb2_end)
-
+    print(org2, "\n", bb2, "\n", bb2_end)
 
     print(org1)
     print(bb1)
@@ -1026,14 +1150,13 @@ if __name__ == "__main__":
     print(bb2)
 # %%
 
-    mup = cc['markups']
+    mup = cc["markups"]
     len(mup)
     mup[0].keys()
 # %%
-    
 
 # %%
-    lm = to_int(L.lm_cc)
+    lm = to_int(L.li_cc)
     L.fil.GetOrientedBoundingBoxDirection(1)
     L.fil.GetBoundingBox(1)
     L.fil.Execute(lm)
@@ -1041,7 +1164,7 @@ if __name__ == "__main__":
 # %%
     pd.set_option("display.max_colwidth", None)
 # %%
-    dfs=[]
+    dfs = []
     for fn in fns:
         df = pd.read_csv(fn)
         dfs.append(df)
@@ -1050,7 +1173,7 @@ if __name__ == "__main__":
     partial_df = pd.concat(dfs)
 # %%
     # maybe_makedirs(preds_fldr/("results"))
-# "crc_CRC004_20190425_CAP1p5.nii.gz"; //"/s/fran_storage/predictions/lidc2/LITS-911/lung_020.nii.gz"; %%
+    # "crc_CRC004_20190425_CAP1p5.nii.gz"; //"/s/fran_storage/predictions/lidc2/LITS-911/lung_020.nii.gz"; %%
     preds_nnunet_fldr = Path("/s/datasets_bkp/ark/")
     gt_fns = [fn for fn in gt_fns if is_sitk_file(fn)]
 
@@ -1059,290 +1182,270 @@ if __name__ == "__main__":
     # partial_df = results_df
     imgs_fldr = Path("/s/xnat_shadow/crc/completed/images")
 
-
 # %%
-# SECTION:-------------------- Batchscorer Ray-------------------------------------------------------------------------------------- <CR> <CR>
+# SECTION:-------------------- BATCH PT-------------------------------------------------------------------------------------- <CR>
 
-    n_lists = 10
-    # gt_fns = gt_fns[:64]
-    fpl = int(len(gt_fns) / n_lists)
-    inds = [[fpl * x, fpl * (x + 1)] for x in range(n_lists - 1)]
-    inds.append([fpl * (n_lists - 1), None])
-    chunksi = list(il.starmap(slice_list, zip([gt_fns] * n_lists, inds)))
-    dusting_threshold=0
-    df_fn =  Path("/s/fran_storage/predictions/litsmc/LITS-1018_fixed_mc/results/results_thresh{}mm.xlsx".format(dusting_threshold))
+    from utilz.helpers import info_from_filename
+    from fran.managers.project import Project
+    P = Project("kits")
 
-# %%
-    
-    args = [
-        [chunk, preds_fldr, [1], [1], None, partial_df, [], None, False, dusting_threshold, False]
-        for chunk in chunksi
-    ]
+    _, val = P.get_train_val_case_ids(0) 
+    gt_fldr = Path("/r/datasets/preprocessed/kits/lbd/spc_080_080_150_rlb00ec4022_rlb00ec4022_ex020/lms")
+    gt_fns = sorted(gt_fldr.glob("*.pt"))
+    val_fns =[fn for fn in gt_fns  if info_from_filename(fn.name, full_caseid=True)["case_id"] in val]
+    len(val_fns)
+    ignore_labels_gt = [1]
+    ignore_labels_pred = [1]
+    # preds_fldr = Path("/s/fran_storage/predictions/kits/KITS-n7")
+    preds_fldr = Path("/s/fran_storage/predictions/kits/KITS-TW")
+    preds_fldr = Path("/s/fran_storage/predictions/kits/KITS-bl")
+    # gt_fns2 = gt_fns[:5]+ [Path("/r/datasets/preprocessed/kits/lbd/spc_080_080_150_rlb00ec4022_rlb00ec4022_ex020/lms/kits23_00030.pt")]
+    pred_fns = [fn for fn in preds_fldr.glob("*") if info_from_filename(fn.name, full_caseid=True)["case_id"] in val]
+    # pred_fn="/s/fran_storage/predictions/kits/KITS-n7/kits23_00011.pt"
+
+    gt_fldr = Path("/r/datasets/preprocessed/kits/lbd/spc_080_080_150_rlb00ec4022_rlb00ec4022_ex020/lms")
+    gt_fns = list(gt_fldr.glob("*"))
 
 
-    actors = [BatchScorerRay.remote(id) for id in range(n_lists)]
-# %%
-    results = ray.get([c.process.remote(*a) for c, a in zip(actors, args)])
-    df = pd.concat(results)
-    df.to_excel(df_fn, index=False)
-# %%
-    df = pd.read_excel(ub_df_fn)
-    bb = set(df.case_id)
-    bb.difference(aa)
-# %%
-# %%
-# SECTION:-------------------- Batchscorer single -------------------------------------------------------------------------------------- <CR> <CR>
 
-    do_radiomics = False
-    threshold = 0
+    debug_  = True
+    gt_fn =Path(" /r/datasets/preprocessed/kits/lbd/spc_080_080_150_rlb00ec4022_rlb00ec4022_ex020/lms/kits23_00002.pt")
+    preds_fldr = Path("/s/fran_storage/predictions/kits/KITS-n7")
 
+    find_matching_fn(gt_fn, preds_fldr)
 # %%
-    # partial_df = None
-    B = BatchScorer(
-        gt_fns,
+    gt_fns = val_fns
+    BP = BatchScorerPT(
+        gt_fns=gt_fns,
         preds_fldr=preds_fldr,
-        ignore_labels_gt=[],
-        ignore_labels_pred=[1],
         imgs_fldr=None,
-        partial_df=partial_df,
-        debug=False,
+        partial_df=None,
+        ignore_labels_gt=ignore_labels_gt,
+        ignore_labels_pred=ignore_labels_pred,
+        output_fldr=None,
         do_radiomics=False,
-        dusting_threshold=threshold,
-        output_fldr=Path("/home/ub/code/label_analysis/results"),
-    )  # ,output_fldr=Path("/s/fran_storage/predictions/litsmc/LITS-787_mod/results"))
-# %%
-    B.process()
-# %%
-    arkf = list(preds_nnunet_fldr.glob("*"))
-    fns = [fn.name for fn in arkf]
-
-    outfldr = Path("/s/datasets_bkp/ark/imgs_pending")
-    imgs_fldr = Path("/s/xnat_shadow/crc/images")
-    im = list(imgs_fldr.glob("*"))
-    ims = [fn.name for fn in im]
-    aa = list(set(ims).difference(fns))
-    import shutil
-
-# %%
-    for fn in aa:
-        in_f = imgs_fldr / fn
-        out_f = outfldr / fn
-        shutil.copy(in_f, out_f)
-
-# %%
-
-# %%
-# SECTION:-------------------- FILE SCOorer (ScorerAdvanced)-------------------------------------------------------------------------------------- <CR> <CR>
-
-
-    preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-1088")
-    cid = "crc_CRC266"
-
-    gt_fn = [fn for fn in gt_fns if cid in fn.name][0]
-    pred_ub = find_matching_fn(gt_fn, preds_fldr)
-
-    L1 = LabelMapGeometry(gt_fn)
-    L1.dust(0)
-    L2 = LabelMapGeometry(pred_ub)
-    L2.nbrhoods
-    pred = sitk.ReadImage(str(pred_ub))
-    lm = to_cc(pred)
-    get_labels(pred)
-    get_labels(lm)
-# %%
-    gt_fn = "/s/xnat_shadow/nodes/lms/nodes_15_20181023_LargeAbdo3p0eFoV.nii.gz"
-    pred_ub = "/s/fran_storage/predictions/nodes/LITS-1230/nodes_15_20181023_LargeAbdo3p0eFoV.nii.gz"
-# %%
-    S = ScorerAdvanced(
-        gt_fn, pred_ub, ignore_labels_gt=[], ignore_labels_pred=[]
-    )
-# %%
-    df = S.process()
-    df.to_csv("crc278.csv")
-    sitk.WriteImage(S.LP.lm_cc,"pred_cc.nii.gz")
-    sitk.WriteImage(S.LG.lm_cc,"gt_cc.nii.gz")
-# %%
-    LG = LabelMapGeometry(gt_fn)
-    LG.dust(0)
-
-    LG.nbrhoods
-# %%
-#SECTION:-------------------- SCORER SLICEROUTPUT--------------------------------------------------------------------------------------
-
-    # pred_fn2= "/home/ub/code/label_analysis/pred_cc_slicer.nrrd"
-    # gt_fn2 = "/home/ub/code/label_analysis/gt_cc_slicer.nrrd"
-    #
-    # S = ScorerAdvanced(
-    #     gt_fn2, pred_fn2, ignore_labels_gt=[], ignore_labels_pred=[]
-    # )
-# %%
-    # lg_ar = sitk.GetArrayFromImage(S.LG.lm_cc)
-    # lp_ar = sitk.GetArrayFromImage(S.LP.lm_cc)
-    # ImageMaskViewer([lg_ar, lp_ar], 'mm')
-# %%
-    df = S.process()
-    df.to_csv("crc211.csv")
-    sitk.WriteImage(S.LP.lm_cc,"pred_cc.nii.gz")
-    sitk.WriteImage(S.LG.lm_cc,"gt_cc.nii.gz")
-
-# SECTION:-------------------- TROUBLESHOOTING------------------------------------------------------------------------------------- <CR> <CR>
-# %%
-    fn1 = "/home/ub/code/label_analysis/pred_19.nrrd"
-    fn2 = "/home/ub/code/label_analysis/gt_22.nrrd"
-    gt_fn = "/s/xnat_shadow/crc/lms/crc_CRC019_20190617_ABDOMEN.nii.gz"
-    pred_fn = "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/crc_CRC019_20190617_ABDOMEN.nii.gz"
-    S = ScorerAdvanced(
-        gt_fn, pred_fn, ignore_labels_gt=[], ignore_labels_pred=[], case_id="test"
-    )
-    df = S.process()
-    # S = ScorerAdvanced(gt_fn, pred_ub,ignore_labels_gt=[1],ignore_labels_pred=[1])
-    # df = S.process()
-
-# %%
-    S.dusting_threshold
-    deb = False
-    print("Processing {}".format(S.case_id))
-    S.dust()
-    S.compute_overlap_overall()
-# %%
-    sitk.WriteImage(S.LP.lm_cc,"pred_cc.nii.gz")
-    sitk.WriteImage(S.LG.lm_cc,"_cc.nii.gz")
-# %%
-    if S.empty_lm == "neither":
-        S.compute_overlap_perlesion()
-        S.recompute_overlap_perlesion()
-    S.gt_radiomics(deb)
-# %%
-
-    nbrhoods = S.LG.nbrhoods.copy()
-    label_key="gt_label_cc"
-    colnames = ["label", "cent", "length", "volume", "label_cc"]
-    dfs = []
-    for i in range(len(S.df2)):
-        cluster = S.df2.iloc[i]
-        labels = cluster[label_key]
-        fk = cluster["fk"]
-        row = nbrhoods.loc[nbrhoods["label_cc"].isin(cluster[label_key])]
-        # if len(labels)>1:
-        #     label_dom = [row['label'].max()]
-        #     cent = [row['cent'].tolist()[0]]
-        #     length = [row['length'].sum()]
-        #     volume = [row['volume'].sum()]
-        #     df_dict = {'label':label_dom, 'cent':cent,'length':length, 'volume':volume,'label_cc':fk ,'fk':fk}
-        #     df_mini = pd.DataFrame(df_dict)
-        #     dfs.append(df_mini)
-        # elif len(labels)==1:
-        df_mini = row[colnames]
-        df_mini = df_mini.assign(fk=fk)
-        dfs.append(df_mini)
-    df_fks = pd.concat(dfs, axis=0)
-# %%
-    S.insert_dsc_fks()
-    df_f = S.create_df_full()
-# %%
-
-# %%
-    prox_labels, prox_inds = S.get_neighbr_labels()
-    S.LG_ind_cc_pairing = {a[0]: b[0] for a, b in zip(prox_inds, prox_labels)}
-    S.LP_ind_cc_pairing = {a[1]: b[1] for a, b in zip(prox_inds, prox_labels)}
-
-    S.dsc = np.zeros(
-        [max(1, len(S.LP)), max(1, len(S.LG))]
-    ).transpose()  # max(1,x) so that an empty matrix is not created
-    S.jac = np.copy(S.dsc)
-    if S.empty_lm == "neither":
-        args = [[S.LG.lm_cc, S.LP.lm_cc, *a] for a in prox_labels]
-
-        d = multiprocess_multiarg(
-            labels_overlap, args, 16, False, False, progress_bar=True
-        )  # multiprocess i s slow
-
-        # this pairing is a limited number of indices (and corresponding labels) which are in neighbourhoods between LG and LP
-        for i, sc in enumerate(d):
-            ind_pair = list(prox_inds[i])
-            S.dsc[ind_pair[0], ind_pair[1]] = sc[0]
-            S.jac[ind_pair[0], ind_pair[1]] = sc[1]
-
-# %%
-    #
-    S.LG.nbrhoods["dsc"] = float("nan")
-    S.LG.nbrhoods["fk"] = -1
-    S.LP.nbrhoods["fk"] = -2
-    if S.empty_lm != "neither":
-        pass
-    else:
-        S.LG.nbrhoods = S.insert_fks(S.LG.nbrhoods, "gt_label_cc")
-        S.LP.nbrhoods = S.insert_fks(S.LP.nbrhoods, "pred_label_cc")
-
-# %%
-
-    nbg = S.insert_fks(S.LG.nbrhoods, "gt_label_cc")
-    nbp = S.insert_fks(S.LP.nbrhoods, "pred_label_cc")
-    df_f2 = S.create_df_full()
-# %%
-    nbrhoods = S.LG.nbrhoods.copy()
-    label_key = "gt_label_cc"
-
-# %%
-
-#SECTION:-------------------- BATCH NNUNET--------------------------------------------------------------------------------------
-
-    args_nnunet = [
-        [
-            chunk,
-            preds_nnunet_fldr,
-            [1],
-            [1],
-            None,
-            partial_df,
-            [],
-            None,
-            False,
-            dusting_threshold,
-            False,
-        ]
-        for chunk in chunksi
-    ]
-    results_nnunet = ray.get(
-        [c.process.remote(*a) for c, a in zip(actors, args_nnunet)]
-    )
-    df_nnunet = pd.concat(results_nnunet)
-    df_fn_nnunet = preds_nnunet_fldr / ("results/results.xlsx")
-    df_nnunet.to_excel(df_fn_nnunet, index=False)
-
-# %%
-
-# %%
-# SECTION:-------------------- SORT out -------------------------------------------------------------------------------------- <CR> <CR>
-
-# %%
-    out_fldr_missed = Path(
-        "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/missed_subcm/"
-    )
-    out_fldr_missed_binary = Path(
-        "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/missed_subcm_binary/"
-    )
-    out_fldr_detected = Path(
-        "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/detected_subcm/"
-    )
-    out_fldr_detected_binary = Path(
-        "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/detected_subcm_binary/"
+        dusting_threshold=1,
+        debug=False,
+        output_suffix=1
     )
 
+    df = BP.process()
 # %%
-    for lm_fn in gt_fns:
-        cid = info_from_filename(lm_fn.name, full_caseid=True)["case_id"]
-        sub_df = results_df[results_df["case_id"] == cid]
-        sub_df = sub_df[sub_df["fk"] > 0]
-        missed = sub_df[sub_df["dsc"].isna()]
-        missed = missed[missed["gt_length"] <= 10]
-        if len(missed) > 0:
-
-            lm = sitk.ReadImage(str(lm_fn))
-            L = LabelMapGeometry(lm)
-            cents = missed["gt_cent"].tolist()
-            excluded = L.nbrhoods[L.nbrhoods["length"] > 10]
-            excluded = e
+    S= ScorerAdvancedPT(gt_fn = gt_fn, pred_fn = pred_fn, case_id=None, ignore_labels_gt=[1], ignore_labels_pred=[1], do_radiomics=False, dusting_threshold=1)
+    S.process()
+    # gt_fns = [gt_fn]
+# # %%
+#
+#
+#         df_rad = pd.DataFrame(S.radiomics)
+#         LG_out1 = S.LG.nbrhoods.rename(
+#             mapper=lambda x: "gt_" + x if not x in ["dsc", "fk"] else x, axis=1
+#         )
+#         LG_out2 = df_rad.merge(
+#             LG_out1, right_on="gt_label_cc", left_on="label", how="outer"
+#         )
+#
+#         LP_out = S.LP.nbrhoods.rename(
+#             mapper=lambda x: "pred_" + x if x != "fk" else x, axis=1
+#         )
+# # %%
+#         if hasattr(S, "df2"):
+#             dfs_all = [LG_out2, LP_out, S.df2[["fk", "dsc"]]]
+#         else:
+#             dfs_all = [LG_out2, LP_out]
+#         df = reduce(lambda rt, lt: pd.merge(rt, lt, on="fk", how="outer"), dfs_all)
+#
+#         df["pred_fn"] = S.pred_fn
+#         df["gt_fn"] = S.gt_fn
+#         df["dsc_overall"], df["jac_overall"] = (
+#             S.dsc_overall,
+#             S.jac_overall,
+#         )
+#         df["gt_volume_total"] = S.LG.volume_total
+#         df["pred_volume_total"] = S.LP.volume_total
+#         df["case_id"] = df["case_id"].fillna(value=S.case_id)
+#
+    
 # %%
-
-# %%
+    df=    BP.process()
+# # %%
+#
+#             fn_dict = BP.file_dicts[0]
+#             gt_fn, pred_fn, img_fn = fn_dict.values()
+#             print("processing {}".format(gt_fn))
+#             BP.S = BP.scorer_cls(
+#                 gt_fn=gt_fn,
+#                 img_fn=img_fn,
+#                 pred_fn=pred_fn,
+#                 ignore_labels_gt=BP.ignore_labels_gt,
+#                 ignore_labels_pred=BP.ignore_labels_pred,
+#                 case_id=None,
+#                 save_matrices=False,
+#                 do_radiomics=BP.do_radiomics,
+#                 dusting_threshold=BP.dusting_threshold,
+#             )
+# # %%
+#     S = BP.S
+#
+#     print("Processing {}".format(S.case_id))
+#     S.dust()
+#     S.compute_overlap_overall()
+# # %%
+#     if S.empty_lm == "neither":
+#         S.compute_overlap_perlesion()
+#         S.recompute_overlap_perlesion()
+#         r =S.dsc.shape[0]
+# # %%
+#
+#         print("Processing {}".format(S.case_id))
+#         S.dust()
+#         S.compute_overlap_overall()
+#         if S.empty_lm == "neither":
+#             S.compute_overlap_perlesion()
+#             S.recompute_overlap_perlesion()
+#         else:
+#             S.generate_fake_df2()
+#         S.gt_radiomics(False)
+#
+#         df = S.create_df_full()
+# # %%
+#         df.to_csv("tmp.csv")
+# # %%
+#         gt_labs = []
+#         pred_labs = "pred_lab_" + S.LP.nbrhoods["label_cc"].astype(str)
+#         G = nx.Graph()
+#         G.add_nodes_from(gt_labs, bpartite=0)
+#         G.add_nodes_from(pred_labs, bpartite=1)
+#         edge_sets = []
+# # %%
+#         for row in range(r):
+#             if row in S.LG_ind_cc_pairing.keys():
+#                 gt_lab = "gt_lab_" + str(S.LG_ind_cc_pairing[row])
+#                 edges = np.argwhere(S.dsc[row, :]).flatten().tolist()
+#                 pred_labs = [
+#                     "pred_lab_" + str(S.LP_ind_cc_pairing[ind]) for ind in edges
+#                 ]
+#                 gt_ind_2_preds = [(gt_lab, pred_lab) for pred_lab in pred_labs]
+#                 edge_sets.extend(gt_ind_2_preds)
+#             else:
+#                 pass  # This index LG has no overlapping pred
+#         G.add_edges_from(edge_sets)
+#         con = nx.connected_components(G)
+#         ccs = list(con)
+#
+# # %%
+#         fk_gen = fk_generator(start=1)
+#         gt_remaps = {}
+#         pred_remaps = {}
+#         fks = []
+#         S.df2 = []
+#         for cc in ccs:
+#             fk = next(fk_gen)
+#             fks.append(fk)
+#             dici = {"fk": fk}
+#             gt_labels = []
+#             pred_labels = []
+#             recompute_dsc = False
+#             dsc = float("nan")
+# # %%
+#             if len(cc) > 2:
+#                 recompute_dsc = True
+#             elif len(cc) == 2:
+#                 dsc = S.dsc_from_cc_pair(cc)
+#             while cc:
+#                 label = cc.pop()
+#                 indx = re.findall(r"\d+", label)[0]
+#                 indx = int(indx)
+#                 if "gt" in label:
+#                     gt_labels.append(indx)
+#                     gt_remaps.update({indx: fk})
+#                 else:
+#                     pred_labels.append(indx)
+#                     pred_remaps.update({indx: fk})
+# # %%
+#             labels = {
+#                 "pred_label_cc": pred_labels,
+#                 "gt_label_cc": gt_labels,
+#                 "recompute_dsc": recompute_dsc,
+#                 "dsc": dsc,
+#             }
+#             dici.update(labels)
+# # %%
+# # %%
+#
+#             S.df2.append(dici)
+#         S.df2 = pd.DataFrame(S.df2)
+#         S.LG._relabel(gt_remaps)
+#         S.LP._relabel(pred_remaps)
+#
+#         redsc_labels = S.df2.loc[S.df2["recompute_dsc"] == True, "fk"].tolist()
+#         prox_labels = [[a, a] for a in redsc_labels]
+#
+#         dsc_jac_multi = S._dsc_multilabel(prox_labels)
+#
+#         S.dsc_multi = [a[0] for a in dsc_jac_multi]
+#         S.df2.loc[S.df2["fk"].isin(redsc_labels), "dsc"] = S.dsc_multi
+#
+#
+# # %%
+#     
+#     # S.gt_radiomics(debug)
+#     S.insert_dsc_fks()
+#
+#             S.gt_radiomics(debug_)
+#             df  =S.create_df_full()
+#             # df  =S.create_df_full()
+# # # %%
+#
+#     S = BP.S
+#     S.LP.nbrhoods
+#     S.LP.labels
+# # %%
+#     lms = S.LP.unique_lms[0]
+#     lms["lmap"].GetLabels()
+# # def process(S, debug=False):
+# #     print("Processing ")
+#     S.dust()
+#     S.compute_overlap_perlesion()
+#     S.LP.is_empty()
+#     S.LP.labels
+# # %%
+# #SECTION:-------------------- COMPUTE OL pER LESION--------------------------------------------------------------------------------------
+#         print("Computing label jaccard and dice scores")
+#         prox_labels, prox_inds = S.get_neighbr_labels()
+#         S.LG_ind_cc_pairing = {a[0]: b[0] for a, b in zip(prox_inds, prox_labels)}
+#         S.LP_ind_cc_pairing = {a[1]: b[1] for a, b in zip(prox_inds, prox_labels)}
+#
+#         S.dsc = np.zeros([max(1, len(S.LP)), max(1, len(S.LG))]).transpose()
+#         S.jac = np.copy(S.dsc)
+#         if S.empty_lm == "neither":
+#             args = [[S.LG.li_cc_sitk, S.LP.li_cc_sitk, *a] for a in prox_labels]
+#             d = multiprocess_multiarg(
+#                 labels_overlap, args, 16, False, False, progress_bar=True
+#             )
+#
+#             for i, sc in enumerate(d):
+#                 ind_pair = list(prox_inds[i])
+#                 S.dsc[ind_pair[0], ind_pair[1]] = sc[0]
+#                 S.jac[ind_pair[0], ind_pair[1]] = sc[1]
+#
+# # %%
+# df = S.LP.nbrhoods
+#         bboxes_lg = S.LG.nbrhoods["bbox"]
+#         bboxes_lp = S.LP.nbrhoods["bbox"]
+#         prox_inds = proximity_indices2(bboxes_lg, bboxes_lp)
+# # %%
+#
+#     S.make_one_to_one_dsc()
+#     S.compute_overlap_overall()
+#     S.cont_tables()
+#     df = S.create_df_full()
+# k# %%
+# #SECTION:-------------------- TS--------------------------------------------------------------------------------------
+#
+#     fn_dict = BP.file_dicts[0]
+#     gt_fn, pred_fn, img_fn = fn_dict.values()
+#     print("processing {}".format(gt_fn))
+#
+# # %%
+# #SECTION:-------------------- --------------------------------------------------------------------------------------            S.compute_overlap_overall()

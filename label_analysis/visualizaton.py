@@ -316,9 +316,9 @@ if __name__ == '__main__':
     interactor.Start()
 
     im_fn = "/s/xnat_shadow/nodes/images/nodes_43_20220805_CAP1p5SoftTissue.nii.gz"
-    lm_fn = "/s/fran_storage/predictions/nodes/LITS-1405_LITS-1416_LITS-1417/nodes_42_20230425_CAP1p5mm.nii.gz"
+    li_fn = "/s/fran_storage/predictions/nodes/LITS-1405_LITS-1416_LITS-1417/nodes_42_20230425_CAP1p5mm.nii.gz"
     im = sitk.ReadImage(im_fn)
-    lm = sitk.ReadImage(lm_fn)
+    lm = sitk.ReadImage(li_fn)
     render_volume(lm,im,ct_presets=["skeleton"])
 
 

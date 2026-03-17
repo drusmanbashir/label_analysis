@@ -3,19 +3,26 @@ library(dplyr)
 library(purrr)
 library(tidyr)
 # %%
-setwd("/home/ub/code/mask_analysis/rstats")
+setwd("/home/ub/code/label_analysis/label_analysis/rstats")
+library(devtools)
 
+install.packages("tidyverse")
+install.packages("rlang")
+library('ggplot2')
+
+devtools::install_github("r-lib/rlang")
+# %%
+#SECTION:-------------------- section--------------------------------------------------------------------------------------
 # folder <-"/s/fran_storage/predictions/lits/ensemble_LITS-408_LITS-385_LITS-383_LITS-357"
 
-folder <-"/s/fran_storage/predictions/lits/ensemble_LITS-451_LITS-452_LITS-453_LITS-454_LITS-456/"
-dfs_n<-file.path(folder,"df_sub_cm.csv")
+# %%
+folder <-"/s/fran_storage/predictions/kits2/KITS2-bk/results"
+dfs_n<-file.path(folder,"results_thresh1mm_all.xlsx")
 # df_n<-file.path(folder,"df_relevant.csv")
-dfa_n <-file.path(folder,"results_rsna.csv")
-dfs<- read.csv(dfs_n)
-dfn<-read.csv("../results/normal_cases_analysis.csv")
-
+df  <- readxl(dfs_n)
 load ('df.Rda')
-
+# %%
+#SECTION:-------------------- section--------------------------------------------------------------------------------------
 # COUNT FP 
 # %%
 

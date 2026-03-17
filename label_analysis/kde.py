@@ -63,7 +63,7 @@ if __name__ == '__main__':
     csv_fn = Path(
         "/r/datasets/preprocessed/lidc/lbd/spc_075_075_075_rlb109adb5e_rlb109adb5e_ex000/label_stats/lesion_stats.csv"
     )
-    csv_fn  = "/media/UB/datasets/kits21/label_analysis/lesion_stats.csv"
+    csv_fn  = "/media/UB/datasets/kits23/label_analysis/lesion_stats.csv"
 
     csv_lidc="/media/UB/datasets/lidc_all/label_analysis/lesion_stats.csv"
     kde(csv_fn)

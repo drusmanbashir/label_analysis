@@ -113,7 +113,7 @@ if __name__ == "__main__":
 
     labs_cc = L.nbrhoods['label_cc']
     if len(labs_cc)>0:
-        rads = radiomics_multiprocess(img,L.lm_cc,labs_cc,gt_fn,)
+        rads = radiomics_multiprocess(img,L.li_cc,labs_cc,gt_fn,)
         rads[1]['label']
         mini_df = pd.DataFrame(rads)
         L.nbrhoods= L.nbrhoods.merge(mini_df,left_on='label_cc',right_on='label')

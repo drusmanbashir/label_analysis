@@ -6,7 +6,8 @@ import SimpleITK as sitk
 from fastcore.basics import listify
 import ipdb
 import numpy as np
-
+from utilz.itk_sitk import ConvertItkImageToSimpleItkImage, ConvertSimpleItkImageToItkImage
+import itk
 from label_analysis.utils import align_sitk_imgs
 
 tr = ipdb.set_trace
@@ -190,6 +191,13 @@ def get_labels(img):
     return arr_int
 
 
+def get_labels_itk(img):
+    arr = itk.GetArrayFromImage(img)
+    labs = np.unique(arr)
+    labs_pos = [int(a) for a in labs if a != 0]
+    return labs_pos
+
+
 @astype(22, 0)
 def remove_organ_label(img,tumour_always_present=True):
     '''
@@ -240,6 +248,17 @@ def relabel(lm,remapping:dict) -> sitk.Image:
             print("Could not recast to original pixel type {0}. Returned img is of type {1}".format(org_type, lm_cc.GetPixelID()))
         return lm_cc
 
+
+def relabel_itk(li, remapping):
+        li_sitk = ConvertItkImageToSimpleItkImage(li, sitk.sitkUInt8)
+        li_cc_sitk= relabel(li_sitk, remapping)
+        pt = type(li)
+        if "UC" in str(pt):
+            li_out = ConvertSimpleItkImageToItkImage(li_cc_sitk,itk.UC )
+        elif "US" in str(pt):
+            li_out = ConvertSimpleItkImageToItkImage(li_cc_sitk, itk.US)
+        else: raise Exception("Unsupported pixel type {0}".format(pt))
+        return li_out
 
 def empty_img(tmplt_img):
     size = tmplt_img.GetSize()

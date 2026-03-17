@@ -1,1 +1,1 @@
-/home/ub/code/label_analysis/label_analysis/AGENTS.md
+/home/ub/code/agent/AGENTS.md

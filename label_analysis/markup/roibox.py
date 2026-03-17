@@ -90,17 +90,17 @@ def bbox_from_roi_file(mrk_path: Path, image_path: Path, pad: int = 0) -> BBox:
 # %%
 if __name__ == '__main__':
 
-    lm_fn = "/s/fran_storage/predictions/nodes/LITS-1288/nodes_25_20201216_CAP1p5SoftTissue.nii.gz"
+    li_fn = "/s/fran_storage/predictions/nodes/LITS-1288/nodes_25_20201216_CAP1p5SoftTissue.nii.gz"
     img_fn = "/s/xnat_shadow/nodes/images_pending/thin_slice/images/nodes_25_20201216_CAP1p5SoftTissue.nii.gz"
     roi_fn = "/home/ub/Documents/nodes_25_20201216_CAP1p5SoftTissueR.mrk.json"
     roi2_fn = "/home/ub/Documents/nodes_25_20201216_CAP1p5SoftTissueR_1.mrk.json"
     point_fn = "/home/ub/Documents/nodes_25_20201216_CAP1p5SoftTissue_2_singlepoint.mrk.json"
-    L = LabelMapGeometry(lm_fn)
+    L = LabelMapGeometry(li_fn)
     L.nbrhoods 
 # %%
-    B1 = bbox_from_roi_file(roi_fn, lm_fn)
-    B2 = bbox_from_roi_file(roi2_fn, lm_fn)
-    point = load_markups_points_indices(point_fn,lm_fn)
+    B1 = bbox_from_roi_file(roi_fn, li_fn)
+    B2 = bbox_from_roi_file(roi2_fn, li_fn)
+    point = load_markups_points_indices(point_fn,li_fn)
     bboxes = L.nbrhoods['bbox']
     bboxes = [BBox(b[0],b[3],b[1],b[4],b[2],b[5]) for b in bboxes]
     overlaps = [B1.intersects(bbox) for bbox in bboxes]
@@ -109,9 +109,9 @@ if __name__ == '__main__':
     overlaps_fina = [any([o1 ,o2,o3]) for o1, o2, o3 in zip(overlaps, overlaps2, overlaps3)]
     rem = L.nbrhoods['label_cc'][overlaps_fina]
     L.remove_labels(rem)
-    lm_fn_out = lm_fn.replace(".nii.gz", "_2.nii.gz")
+    li_fn_out = li_fn.replace(".nii.gz", "_2.nii.gz")
     lm_bin = to_binary(L.lm_cc)
-    sitk.WriteImage(lm_bin, lm_fn_out)
+    sitk.WriteImage(lm_bin, li_fn_out)
 
     results: Dict[Path, BBox] = {}
     rows: List[Dict[str, Any]] = []
@@ -121,7 +121,7 @@ if __name__ == '__main__':
 # %%
     si, sj, sk = bb.as_slices()
     rows.append({
-    "file": str(lm_fn),
+    "file": str(li_fn),
     "imin": bb.imin, "isize": bb.isize,
     "jmin": bb.jmin, "jsize": bb.jsize,
     "kmin": bb.kmin, "ksize": bb.ksize,
@@ -170,7 +170,7 @@ if __name__ == '__main__':
     if cs == "RAS":
         pts = _ras_to_lps(pts)
 # %%
-    bb = bbox_from_markup_file(cc_fn, lm_fn)
+    bb = bbox_from_markup_file(cc_fn, li_fn)
 # %%
     L.nbrhoods
 

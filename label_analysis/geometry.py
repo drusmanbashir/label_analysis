@@ -59,55 +59,54 @@ class LabelMapGeometry(GetAttr):
 
     _default = "fil"
 
-    def __init__(self, lm: Union[sitk.Image, str, Path], ignore_labels=[], img=None,compute_feret=True):
+    def __init__(self, li: Union[sitk.Image, str, Path], ignore_labels=[], img=None,compute_feret=True):
 
         # printcpp.say("HO")
         assert isinstance(ignore_labels, list|None), "ignore_labels must be a list"
-        lm, src = load_labelmap_like_to_sitk(lm)
-        self.lm_fn = src
+        li, src = load_labelmap_like_to_sitk(li)
+        self.li_fn = src
         self.fil = sitk.LabelShapeStatisticsImageFilter()
         if compute_feret:
             self.fil.ComputeFeretDiameterOn()
-        lm = to_label(lm)
+        li = to_label(li)
         if len(ignore_labels) > 0:
             remove_labels = {l: 0 for l in ignore_labels}
-            lm = relabel(lm, remove_labels)
+            li = relabel(li, remove_labels)
         self.img = img
-        self.lm_org = lm
-        self.create_lm_binary()
-        self.create_lm_cc()  # creates ordered labelmap from original labels and a key mapping
+        self.li_org = li
+        self.create_li_binary()
+        self.create_li_cc()  # creates ordered labelmap from original labels and a key mapping
         self.execute_filter()
         self.calc_geom()
 
     # def calc_bb(self):
     #     self.fil.ComputteBounndin
 
-    def create_lm_binary(self):
-        lm_tmp = self.lm_org
-
+    def create_li_binary(self):
+        lm_tmp = self.li_org
         lm_tmp = single_label(lm_tmp, 1)
-        self.lm_binary = lm_tmp
+        self.li_binary = lm_tmp
 
-    def create_lm_cc(self):
+    def create_li_cc(self):
         lms = []
         key = {}
         start_ind = 0
-        labels_org = get_labels(self.lm_org)
+        labels_org = get_labels(self.li_org)
         if len(labels_org) > 0:
             for label in labels_org:
-                lm1, labs = remap_single_label(self.lm_org, label, start_ind)
+                lm1, labs = remap_single_label(self.li_org, label, start_ind)
                 k = {l: label for l in labs}
                 start_ind = max(labs)
                 lms.append(lm1)
                 key.update(k)
             if len(lms) > 1:
-                self.lm_cc = merge(lm_base=lms[0],lms_other = lms[1:])
+                self.li_cc = merge(lm_base=lms[0],lms_other = lms[1:])
             else:
-                self.lm_cc = lms[0]
+                self.li_cc = lms[0]
             self.key = key
         else:
             print("Empty labelmap")
-            self.lm_cc = sitk.Image()
+            self.li_cc = sitk.Image()
 
     def calc_geom(self):
         columns = [
@@ -117,7 +116,7 @@ class LabelMapGeometry(GetAttr):
             "bbox",
             "flatness",
             "rad",
-            "length",
+            "feret",
             "volume_cc",
         ]
         vals_all = []
@@ -144,9 +143,8 @@ class LabelMapGeometry(GetAttr):
     def dust(self, dusting_threshold, remove_flat=True):
         if not self.is_empty():
             # dust below length threshold
-            inds_small = [l < dusting_threshold for l in self.lengths.values()]
+            inds_small = [l < dusting_threshold for l in self.ferets.values()]
             self.labels_small = list(il.compress(self.labels, inds_small))
-            # self.labels_flat =
             self.remove_labels(self.labels_small)
             if remove_flat == True and len(self.nbrhoods) > 0:
                 labs_flat = self.nbrhoods["label_cc"][
@@ -155,10 +153,11 @@ class LabelMapGeometry(GetAttr):
                 print("Removing flat (2D) labels: ")
                 self.remove_labels(labs_flat)
 
-    def remove_labels(self, labels):
-        dici = {x: 0 for x in labels}
+    def remove_labels(self, labels): 
+        labels = listify(labels)
+        remapping = {x: 0 for x in labels}
         print("Removing labels {0}".format(labels))
-        self._relabel(dici)
+        self._relabel(remapping)
         self.nbrhoods = self.nbrhoods[~self.nbrhoods["label_cc"].isin(labels)]
         self.nbrhoods.reset_index(inplace=True, drop=True)
         for l in labels:
@@ -167,19 +166,17 @@ class LabelMapGeometry(GetAttr):
         if self.is_empty():
             self.nbrhoods = make_zero_df(self.nbrhoods.columns)
 
-    def execute_filter(self):
-        self.lm_cc = to_int(self.lm_cc)
-        self.fil.Execute(self.lm_cc)
 
-    def _relabel(self, remapping):
-        self.lm_cc  = relabel(self.lm_cc, remapping)
-        # remapping = np_to_native_dict(remapping)
-        # self.lm_cc = to_label(self.lm_cc)
-        # self.lm_cc = sitk.ChangeLabelLabelMap(self.lm_cc, remapping)
-        # self.execute_filter()
-        logging.warning(
-            "Labelmap labels have been changed. The nbrhoods df is still as before"
-        )
+    def execute_filter(self):
+        self.li_cc = to_int(self.li_cc)
+        self.fil.Execute(self.li_cc)
+
+    def _relabel(self, remapping, verbose=True):
+        self.li_cc  = relabel(self.li_cc, remapping)
+        if verbose==True:
+            logging.warning(
+                "Labelmap labels have been changed. The nbrhoods df is still as before"
+            )
 
     def radiomics(self, params_fn=None):
         from label_analysis.radiomics_setup import radiomics_multiprocess
@@ -187,7 +184,7 @@ class LabelMapGeometry(GetAttr):
         labs_cc = self.nbrhoods["label_cc"]
         if len(labs_cc) > 0:
             rads = radiomics_multiprocess(
-                self.img, self.lm_cc_sitk, labs_cc, self.lm_fn, params_fn=params_fn
+                self.img, self.li_cc_sitk, labs_cc, self.li_fn, params_fn=params_fn
             )
             mini_df = pd.DataFrame(rads)
             self.nbrhoods = self.nbrhoods.merge(
@@ -211,7 +208,8 @@ class LabelMapGeometry(GetAttr):
         return list(set(self.key.values()))
 
     def __len__(self):
-        return len(self.labels)
+        labels = [l for l in self.labels if l > 0]
+        return len(labels)
 
     @property
     def volumes(self):
@@ -234,19 +232,32 @@ class LabelMapGeometry(GetAttr):
     @property
     def centroids(self):
         return [np.array(self.fil.GetCentroid(x)) for x in self.labels]
-
+    
     @property
-    def lm_cc_sitk(self):
-        # Base implementation: lm_cc is already a SimpleITK image.
-        return self.lm_cc
+    def li_cc_sitk(self): return self.li_cc
 
 
 # %%
 if __name__ == "__main__":
 # %%
 # SECTION:-------------------- SETUP-------------------------------------------------------------------------------------- <CR>
+    # from fran.managers.datasource import _DS
+    data_folder = Path(
+    "/r/datasets/preprocessed/kits/lbd/spc_080_080_150_rlb00ec4022_rlb00ec4022_ex020/"
+    )
+    pred_fldr = Path("/s/fran_storage/predictions/kits/KITS-bl")
+    img_fldr = data_folder / "images"
+    lms_fldr = data_folder / "lms"
+    imgs = sorted(img_fldr.glob("*.pt"))
+    lms=sorted(lms_fldr.glob("*.pt"))
+    preds = sorted(pred_fldr.glob("*.pt"))
 
-    from fran.managers.datasource import _DS
+    L = LabelMapGeometry(preds[0])
+
+    L.nbrhoods.bbox
+    L.nbrhoods
+# %%
+
 
     lm2_fn = "/home/ub/Documents/nodes_90_411Ta_CAP1p5SoftTissue.nii.gz_2-Segment_1-label.nrrd"
     DS = _DS()
@@ -262,12 +273,12 @@ if __name__ == "__main__":
     train_img_fldrs = [Path(fldr) / ("images") for fldr in train_fldrs]
     train_img_fns = [list(fldr.glob("*")) for fldr in train_img_fldrs]
     train_img_fns = list(il.chain.from_iterable(train_img_fns))
-    train_lm_fns = [list(fldr.glob("*")) for fldr in train_lms_fldrs]
-    train_lm_fns = list(il.chain.from_iterable(train_lm_fns))
+    train_li_fns = [list(fldr.glob("*")) for fldr in train_lms_fldrs]
+    train_li_fns = list(il.chain.from_iterable(train_li_fns))
 
     test_imgs_fldr = Path("/s/xnat_shadow/crc/images")
     pred_fns = list(preds_fldr.glob("*"))
-    test_lm_fns = list(test_lms_fldr.glob("*"))
+    test_li_fns = list(test_lms_fldr.glob("*"))
     test_img_fns = list(test_imgs_fldr.glob("*"))
 # %%
     lesions_liver_fn = Path("/home/ub/Documents/litq_10_liver_lesions.nrrd")
@@ -276,7 +287,7 @@ if __name__ == "__main__":
     liver_fn = Path("/home/ub/Documents/litq_10_liver.nrrd")
 
 # %%
-    lm_fn = (
+    li_fn = (
         "/s/fran_storage/predictions/lidc2/LITS-911/lung_020.nii.gz"
     )
     fn_out = "/home/ub/code/label_analysis/label_analysis/label_cc.nii.gz"
@@ -300,13 +311,13 @@ if __name__ == "__main__":
 
 # %%
     lm_f = "/home/ub/code/slicer_cpp/protot/data/lms/nodes_89_Ta90421_Abdomen3p0I30f3.nii.gz"
-    LG = LabelMapGeometry(lm_fn)
+    LG = LabelMapGeometry(li_fn)
     LG.nbrhoods[:4]
     rows[:4]
 # %%
-    indices = range(len(train_lm_fns))
+    indices = range(len(train_li_fns))
     for ind in indices:
-        gt_fn = train_lm_fns[ind]
+        gt_fn = train_li_fns[ind]
         img_fn = find_matching_fn(gt_fn, train_img_fns)
 # %%
 # %%
@@ -321,13 +332,13 @@ if __name__ == "__main__":
     # fns = [Path(fn) for fn in fns]
     # fns = set(fns)
     #
-    # left = set(test_lm_fns).difference(fns)
+    # left = set(test_li_fns).difference(fns)
     # len(left)
 # %%
     hoods = []
     for ind in indices:
-        gt_fn = train_lm_fns[ind]
-        # gt_fn = test_lm_fns[ind]
+        gt_fn = train_li_fns[ind]
+        # gt_fn = test_li_fns[ind]
         img_fn = find_matching_fn(gt_fn, train_img_fns)
         img = sitk.ReadImage(img_fn)
         L = LabelMapGeometry(gt_fn, [1], img)
@@ -361,9 +372,9 @@ if __name__ == "__main__":
     for lab in labs_cc:
         from label_analysis.radiomics_setup import do_radiomics
 
-        rads = do_radiomics(L.img, L.lm_cc, lab, L.lm_fn, paramsFile=params_fn)
+        rads = do_radiomics(L.img, L.li_cc, lab, L.li_fn, paramsFile=params_fn)
 # %%
-    # rads = radiomics_multiprocess(L.img,L.lm_cc,labs_cc,L.lm_fn,params_fn = params_fn)
+    # rads = radiomics_multiprocess(L.img,L.lm_cc,labs_cc,L.li_fn,params_fn = params_fn)
     # mini_df = pd.DataFrame(rads)
     # L.nbrhoods= L.nbrhoods.merge(mini_df,left_on='label_cc',right_on='label')
 
@@ -384,35 +395,36 @@ if __name__ == "__main__":
     # L = LabelMapGeometry(fn1,compute_feret=False)
 
 # %%
-    lm = L.lm_org
+    lm = L.li_org
     target_label = 1
     lms = []
     key = {}
     start_ind = 0
-    labels_org = get_labels(L.lm_org)
+    labels_org = get_labels(L.li_org)
     if len(labels_org) > 0:
         for label in labels_org:
-            lm1, labs = remap_single_label(L.lm_org, label, start_ind)
+            lm1, labs = remap_single_label(L.li_org, label, start_ind)
             k = {l: label for l in labs}
             start_ind = max(labs)
             lms.append(lm1)
             key.update(k)
         if len(lms) > 1:
-            L.lm_cc = merge(lm_base=lms[0],lms_other = lms[1:])
+            L.li_cc = merge(lm_base=lms[0],lms_other = lms[1:])
         else:
-            L.lm_cc = lms[0]
+            L.li_cc = lms[0]
         L.key = key
     else:
         print("Empty labelmap")
-        L.lm_cc = sitk.Image()
+        L.li_cc = sitk.Image()
 
 
 # %%
-    lm_fn = "/home/ub/tmp.nii.gz"
-    lm = sitk.ReadImage(lm_fn)
+    li_fn = "/home/ub/tmp.nii.gz"
+    lm = sitk.ReadImage(li_fn)
     get_labels(lm)
     lm_bin = to_binary_np(lm,1)
     get_labels(lm_bin)
     sitk.WriteImage(lm_bin,"/home/ub/lm_bin2.nii.gz")
-    sitk.WriteImage(L.lm_cc,"lmcc.nii.gz")
+    sitk.WriteImage(L.li_cc,"lmcc.nii.gz")
 # %%
+    

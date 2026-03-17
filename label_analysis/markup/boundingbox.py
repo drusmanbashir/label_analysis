@@ -321,7 +321,7 @@ if __name__ == "__main__":
 #SECTION:-------------------- SETUP--------------------------------------------------------------------------------------
     set_autoreload()
 
-    lm_fn = "/home/ub/code/label_analysis/label_analysis/files/two_lesions.nrrd"
+    li_fn = "/home/ub/code/label_analysis/label_analysis/files/two_lesions.nrrd"
     lm2_fn = "/home/ub/Documents/nodes_90_411Ta_CAP1p5SoftTissue.nii.gz_2-Segment_1-label.nrrd"
     point2_fn = "/home/ub/Documents/nodes_90.mrk.json"
 
@@ -399,7 +399,7 @@ if __name__ == "__main__":
     if cs == "RAS":
         pts = _ras_to_lps(pts)
 # %%
-    bb = bbox_from_markup_file(cc_fn, lm_fn)
+    bb = bbox_from_markup_file(cc_fn, li_fn)
 # %%
 
     lms = []

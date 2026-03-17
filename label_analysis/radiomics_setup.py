@@ -36,9 +36,9 @@ def do_radiomics(img: sitk.Image, lm: sitk.Image, label: int, mask_fn=None, para
     return featureVector
 
 
-def radiomics_multiprocess(img, lm_cc, labels, lm_fn, params_fn=None, debug=False):
+def radiomics_multiprocess(img, lm_cc, labels, li_fn, params_fn=None, debug=False):
     print("Computing lm label radiomics")
-    args = [[img, lm_cc, label, lm_fn, params_fn] for label in labels]
+    args = [[img, lm_cc, label, li_fn, params_fn] for label in labels]
     radiomics = multiprocess_multiarg(
         do_radiomics,
         args,

@@ -52,7 +52,7 @@ class RemapFromDF:
         self.img_fldr = dataset_fldr / "images"
         assert all([fldr.exists() for fldr in [self.img_fldr, self.lms_fldr]]), "Missing folders (one or both) {0} , {1}".format(self.img_fldr, self.lms_fldr)
         self.img_fns = list(self.img_fldr.glob("*"))
-        self.lm_fns = list(self.lms_fldr.glob("*"))
+        self.li_fns = list(self.lms_fldr.glob("*"))
         self.markup_fns = list((dataset_fldr / "markups").glob("*"))
 
         additional_columns = []
@@ -74,16 +74,16 @@ class RemapFromDF:
 
     def process_row(self, row, overwrite=False):
         case_id = row.case_id
-        print("Remapping {} to {}".format(row.lm_fn, row.lm_fn_out))
-        if not overwrite and Path(row.lm_fn_out).exists():
-            print("File {} exists. Skipping..".format(row.lm_fn_out))
+        print("Remapping {} to {}".format(row.li_fn, row.li_fn_out))
+        if not overwrite and Path(row.li_fn_out).exists():
+            print("File {} exists. Skipping..".format(row.li_fn_out))
             return
         if row.lesion_labels == "json":
             R = RemapFromMarkup(organ_label=self.organ_label)
-            R.process(row.lm_fn, row.lm_fn_out, row.markup_fn)
+            R.process(row.li_fn, row.li_fn_out, row.markup_fn)
         elif row.lesion_labels == "normal":
             print("No lesions as per df. Will copy as such to dest folder")
-            shutil.copy(row.lm_fn, row.lm_fn_out)
+            shutil.copy(row.li_fn, row.li_fn_out)
         else:
             case_mapping = {self.target_label: self.schema[row.lesion_labels]}
             if identical_key_vals(case_mapping):
@@ -92,13 +92,13 @@ class RemapFromDF:
                         case_id, self.out_fldr
                     )
                 )
-                shutil.copy(row.lm_fn, row.lm_fn_out)
+                shutil.copy(row.li_fn, row.li_fn_out)
             else:
                 print("Remapping schema: {}".format(case_mapping))
-                mask = sitk.ReadImage(str(row.lm_fn))
+                mask = sitk.ReadImage(str(row.li_fn))
                 mask = sitk.Cast(mask, sitk.sitkUInt8)
                 mask = sitk.ChangeLabel(mask, case_mapping)
-                sitk.WriteImage(mask, str(row.lm_fn_out))
+                sitk.WriteImage(mask, str(row.li_fn_out))
                 print("Done")
 
     def get_matching_fns(self, row):
@@ -112,9 +112,9 @@ class RemapFromDF:
         if self.excluded(row.lesion_labels) == True:
             return {
                 "img_fn": None,
-                "lm_fn": None,
+                "li_fn": None,
                 "markup_fn": None,
-                "lm_fn_out": None,
+                "li_fn_out": None,
             }
         else:
             case_id = row.case_id
@@ -129,7 +129,7 @@ class RemapFromDF:
                 case_id
             )
             img_fn = img_fn[0]
-            lm_fn = find_matching_fn(img_fn, self.lm_fns)
+            li_fn = find_matching_fn(img_fn, self.li_fns)
             if row.lesion_labels == "json":
                 markup_fn = [
                     fn
@@ -143,12 +143,12 @@ class RemapFromDF:
             else:
                 markup_fn = None
 
-            lm_fn_out = self.out_fldr / (lm_fn.name)
+            li_fn_out = self.out_fldr / (li_fn.name)
             dici = {
                 "img_fn": img_fn,
-                "lm_fn": lm_fn,
+                "li_fn": li_fn,
                 "markup_fn": markup_fn,
-                "lm_fn_out": lm_fn_out,
+                "li_fn_out": li_fn_out,
             }
             return dici
 
@@ -184,9 +184,9 @@ class RemapFromMarkup:
         fid_locs = np.array(fid_locs)
         return fid_locs
 
-    def process(self, lm_fn, lm_fn_out, markup_fn, overwrite=False):
-        if lm_fn_out.exists() and not overwrite:
-            print("File {} exists. Skipping..".format(lm_fn_out))
+    def process(self, li_fn, li_fn_out, markup_fn, overwrite=False):
+        if li_fn_out.exists() and not overwrite:
+            print("File {} exists. Skipping..".format(li_fn_out))
             return
         markups = load_json(markup_fn)
         markup_type = "mets" if "mets" in markup_fn.name else "benign"
@@ -195,10 +195,10 @@ class RemapFromMarkup:
         else:
             fid_label, non_fid_label = 2, 3
 
-        lm = sitk.ReadImage(lm_fn)
+        lm = sitk.ReadImage(li_fn)
         lm_cc = self.relabel(lm, markups, fid_label, non_fid_label)
-        print("Writing {}".format(lm_fn_out))
-        sitk.WriteImage(lm_cc, lm_fn_out)
+        print("Writing {}".format(li_fn_out))
+        sitk.WriteImage(lm_cc, li_fn_out)
 
     def relabel(self, lm, fid_markups, fid_label, non_fid_label):
         lm_cc = self.preprocess_lm(lm)
@@ -283,7 +283,7 @@ if __name__ == "__main__":
     RD.lms_fldr = dataset_fldr / "masks"
     RD.img_fldr = dataset_fldr / "images"
     RD.img_fns = list(RD.img_fldr.glob("*"))
-    RD.lm_fns = list(RD.lms_fldr.glob("*"))
+    RD.li_fns = list(RD.lms_fldr.glob("*"))
     RD.markup_fns = list((dataset_fldr / "markups").glob("*"))
 
     additional_columns = []

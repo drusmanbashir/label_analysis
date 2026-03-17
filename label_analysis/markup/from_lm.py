@@ -112,11 +112,11 @@ class MarkupFromLabelmap():
 
 
 class MarkupMultipleFiles(MarkupFromLabelmap):
-    def process(self,lm_fns, out_filename):
+    def process(self,li_fns, out_filename):
         self.total= 0
         ind=0
         # mups_tmp=[]
-        for fn in lm_fns:
+        for fn in li_fns:
             lm = sitk.ReadImage(str(fn))
             mup = super().process(lm)
             if ind==0:
@@ -139,15 +139,15 @@ class MarkupMultipleFiles(MarkupFromLabelmap):
 
 class MarkupFromLabelFile(MarkupFromLabelmap):
 
-    def process(self, lm_fn, outfldr=None, overwrite=False):
-        lm_fn = Path(lm_fn)
-        outfilename,outfldr = self.create_outfilename(outfldr,lm_fn)
+    def process(self, li_fn, outfldr=None, overwrite=False):
+        li_fn = Path(li_fn)
+        outfilename,outfldr = self.create_outfilename(outfldr,li_fn)
         if overwrite==False and outfilename.exists():
             print("File {} already exists. Skipping..".format(outfilename))
             return 1
         maybe_makedirs(outfldr)
-        case_props = info_from_filename(lm_fn.name)
-        lm= sitk.ReadImage(lm_fn)
+        case_props = info_from_filename(li_fn.name)
+        lm= sitk.ReadImage(li_fn)
         lg = LabelMapGeometry(lm,ignore_labels=self.ignore_labels)
         lg.dust(self.dusting_threshold)
         if lg.is_empty():
@@ -168,13 +168,13 @@ class MarkupFromLabelFile(MarkupFromLabelmap):
             save_json(dic_out, outfilename)
 
 
-    def create_outfilename(self,outfldr,lm_fn ):
+    def create_outfilename(self,outfldr,li_fn ):
 
         if outfldr is None:
-            outfldr = lm_fn.parent/("markups")
+            outfldr = li_fn.parent/("markups")
         else:
             outfldr = Path(outfldr)
-        fn_out = replace_extension(lm_fn.name,"json")
+        fn_out = replace_extension(li_fn.name,"json")
         fn_out = outfldr/fn_out
         return fn_out, outfldr
 
@@ -192,16 +192,16 @@ class MarkupDetectionOnly(MarkupFromLabelFile):
     @property
     def template_json(self):
         return tmplt_folder/("detection.json")
-    def process(self,lm_fn, outfldr=None, overwrite=False):
-        lm_fn = Path(lm_fn)
-        outfilename,outfldr = self.create_outfilename(outfldr,lm_fn)
+    def process(self,li_fn, outfldr=None, overwrite=False):
+        li_fn = Path(li_fn)
+        outfilename,outfldr = self.create_outfilename(outfldr,li_fn)
         if overwrite==False and outfilename.exists():
             print("File {} already exists. Skipping..".format(outfilename))
             return 1
         maybe_makedirs(outfldr)
-        case_props = info_from_filename(lm_fn.name)
+        case_props = info_from_filename(li_fn.name)
 
-        lm= sitk.ReadImage(lm_fn)
+        lm= sitk.ReadImage(li_fn)
         lm = self.to_single_label(lm)
         lg = LabelMapGeometry(lm,ignore_labels=self.ignore_labels)
         lg.dust(self.dusting_threshold)
@@ -236,10 +236,10 @@ if __name__ == "__main__":
     gt_fldr = Path("/s/xnat_shadow/crc/lms_manual_final/")
     nodes_fldr = Path("/s/xnat_shadow/nodesthick/lms")
     outfldr = nodes_fldr.parent/("markups")
-    lm_fns = list(nodes_fldr.glob("*.nii.gz"))
+    li_fns = list(nodes_fldr.glob("*.nii.gz"))
 
-    lm_fns = ["/s/xnat_shadow/nodes/lms/nodes_70_20210804_ChestAbdomenPelviswithIVC1p00Hr40S3.nii.gz"]
-    # lm_fn = "/s/fran_storage/predictions/lidc2/LITS-913/lung_038.nii.gz"
+    li_fns = ["/s/xnat_shadow/nodes/lms/nodes_70_20210804_ChestAbdomenPelviswithIVC1p00Hr40S3.nii.gz"]
+    # li_fn = "/s/fran_storage/predictions/lidc2/LITS-913/lung_038.nii.gz"
     maybe_makedirs([outfldr])
 
 # %%
@@ -248,19 +248,19 @@ if __name__ == "__main__":
 
     M = MarkupDetectionOnly(ignore_labels=[],dusting_threshold=0 )
 # %%
-    for lm_fn in lm_fns:
-        M.process(lm_fn,overwrite=True,outfldr=outfldr)
+    for li_fn in li_fns:
+        M.process(li_fn,overwrite=True,outfldr=outfldr)
 # %%
 #SECTION:-------------------- all labels remapped to LABEL 1 
-    for lm_fn in lm_fns:
-        M.process(lm_fn,overwrite=True)
-    lm = sitk.ReadImage(lm_fn)
+    for li_fn in li_fns:
+        M.process(li_fn,overwrite=True)
+    lm = sitk.ReadImage(li_fn)
     labs = get_labels(lm)
     remapping = {x:1 for  x in labs}
     lm = relabel(lm,remapping)
 
     lg = LabelMapGeometry(lm,ignore_labels =[])
-    lm_out = lm_fn.str_replace("mod","mod_cc")
+    lm_out = li_fn.str_replace("mod","mod_cc")
 
     sitk.WriteImage(lg.lm_cc,lm_out)
 # %%
@@ -273,8 +273,8 @@ if __name__ == "__main__":
 # %%
 #SECTION:-------------------- ROUGH--------------------------------------------------------------------------------------
 
-    lm_fn = lm_fns[0]
-    lm = sitk.ReadImage(lm_fn)
+    li_fn = li_fns[0]
+    lm = sitk.ReadImage(li_fn)
     lm_cc = to_cc(lm)
 # %%
     di = sitk.SignedMaurerDistanceMap(lm!=0,insideIsPositive=False,squaredDistance=False,useImageSpacing=False)
