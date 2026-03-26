@@ -31,7 +31,7 @@ U8 = itk.UC
 U8Img = itk.Image[U8, Dim]
 
 
-def _label_to_labelmap(li_org, lab, compute_feret=True):
+def label_to_labelmap(li_org, lab, compute_feret=True):
     """
     Extract a single original label from an ITK label image and convert it
     into a ShapeLabelMap, where each connected component becomes one label
@@ -82,7 +82,7 @@ def _alloc_cc_image(ref):
 
 
 def create_binary_image(li, low, high=None):
-    BT = itk.BinaryThresholdImageFilter[itk.Image[LabelT, Dim], U8Img]
+    BT = itk.BinaryThresholdImageFilter[type(li), U8Img]
     eq = BT.New(Input=li)
     eq.SetLowerThreshold(low)
     if high:
@@ -141,14 +141,14 @@ class LabelMapGeometryITK(LabelMapGeometry):
         self.unique_lms = []
         self.unique_lms_index_by_label_org = {}
 
-        labels_org = get_labels(self.li_sitk)
+        labels_org = get_labels_itk(self.li_org)
         self.li_cc = _alloc_cc_image(self.li_org)
 
         if not labels_org:
             return
 
         for lab in labels_org:
-            lmap = _label_to_labelmap(self.li_org, lab, compute_feret)
+            lmap = label_to_labelmap(self.li_org, lab, compute_feret)
 
             for cc in lmap.GetLabels():
                 self.key[int(cc)] = lab
@@ -371,7 +371,26 @@ class LabelMapGeometryITK(LabelMapGeometry):
         )
 
 
+
+class BBoxInfoFromITK(LabelMapGeometryITK):
+    '''
+    Fast read-only class for nbrhoods. Do not attempt to use other methods from parent classes, not guaranteed to work
+    '''
+
+    def __init__(
+        self,
+        li,
+        ignore_labels=[],
+        ):
+        if isinstance(li,str|Path): li = itk.imread(li)
+        self.li_org = li
+        self.ignore_labels = ignore_labels
+        self.create_li_cc(False)
+        self.calc_geom()
+        self.nbrhoods = self.nbrhoods[~self.nbrhoods["label_org"].isin(self.ignore_labels)]
+
 # %%
+
 # SECTION:-------------------- setup-------------------------------------------------------------------------------------- <CR>
 if __name__ == "__main__":
 # %%
@@ -381,10 +400,10 @@ if __name__ == "__main__":
     ]
 
 
-    gt_fn = Path("/s/fran_storage/predictions/kits/KITS-n7/kits23_00209.pt")
+    gt_fn = Path("/media/UB/datasets/kits23_short/lms/kits23_00005.nii.gz")
 
 # %%
-    L = LabelMapGeometryITK(gt_fn, ignore_labels=[])
+    L = LabelMapGeometryITK(gt_fn, ignore_labels=[1])
 # %%
     L.dust(1)
     L.labels

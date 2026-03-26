@@ -18,7 +18,6 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
-from fastcore.basics import store_attr
 from utilz.fileio import load_json, maybe_makedirs
 from utilz.helpers import *
 from utilz.imageviewers import *
@@ -161,7 +160,14 @@ class ScorerLabelMaps:
         self.LP = LabelMapGeometry(lmp, ignore_labels_p)
         if not results_folder:
             results_folder = "results"
-        store_attr()
+        self.lmg = lmg
+        self.lmp = lmp
+        self.ignore_labels_g = ignore_labels_g
+        self.ignore_labels_p = ignore_labels_p
+        self.detection_threshold = detection_threshold
+        self.dusting_threshold = dusting_threshold
+        self.save_matrices = save_matrices
+        self.results_folder = results_folder
 
     def process(self, debug=False):
         print("Processing ")
@@ -401,7 +407,17 @@ class ScorerFiles(ScorerLabelMaps):
         if not results_folder:
             results_folder = "results"
         print("Dusting threshold {}".format(dusting_threshold))
-        store_attr(but="case_id")
+        self.gt_fn = gt_fn
+        self.pred_fn = pred_fn
+        self.img_fn = img_fn
+        self.params_fn = params_fn
+        self.ignore_labels_gt = ignore_labels_gt
+        self.ignore_labels_pred = ignore_labels_pred
+        self.detection_threshold = detection_threshold
+        self.dusting_threshold = dusting_threshold
+        self.do_radiomics = do_radiomics
+        self.save_matrices = save_matrices
+        self.results_folder = results_folder
 
     def process(self, debug=False):
         try:
@@ -837,7 +853,17 @@ class ScorerAdvancedITK(ScorerAdvanced):
         if not results_folder:
             results_folder = "results"
         print("Dusting threshold {}".format(dusting_threshold))
-        store_attr(but="case_id")
+        self.gt_fn = gt_fn
+        self.pred_fn = pred_fn
+        self.img_fn = img_fn
+        self.params_fn = params_fn
+        self.ignore_labels_gt = ignore_labels_gt
+        self.ignore_labels_pred = ignore_labels_pred
+        self.detection_threshold = detection_threshold
+        self.dusting_threshold = dusting_threshold
+        self.do_radiomics = do_radiomics
+        self.save_matrices = save_matrices
+        self.results_folder = results_folder
 
     def compute_overlap_perlesion(self):
         print("Computing label jaccard and dice scores")
@@ -929,9 +955,15 @@ class BatchScorer:
 
         if output_fldr is None:
             output_fldr = preds_fldr / ("results")
-        store_attr(
-            "partial_df,output_fldr,do_radiomics,debug,ignore_labels_gt, ignore_labels_pred,dusting_threshold,preds_fldr,imgs_fldr"
-        )
+        self.partial_df = partial_df
+        self.output_fldr = output_fldr
+        self.do_radiomics = do_radiomics
+        self.debug = debug
+        self.ignore_labels_gt = ignore_labels_gt
+        self.ignore_labels_pred = ignore_labels_pred
+        self.dusting_threshold = dusting_threshold
+        self.preds_fldr = preds_fldr
+        self.imgs_fldr = imgs_fldr
         gt_fns = self.filter_gt_fns(gt_fns, partial_df, exclude_fns)
         self.file_dicts = self.match_filenames(gt_fns)
 

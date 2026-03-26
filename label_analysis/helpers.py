@@ -192,10 +192,12 @@ def get_labels(img):
 
 
 def get_labels_itk(img):
-    arr = itk.GetArrayFromImage(img)
-    labs = np.unique(arr)
-    labs_pos = [int(a) for a in labs if a != 0]
-    return labs_pos
+    label_map = itk.label_image_to_label_map_filter(img)
+    labels = [
+      label_map.GetNthLabelObject(i).GetLabel()
+      for i in range(label_map.GetNumberOfLabelObjects())
+    ]
+    return labels
 
 
 @astype(22, 0)

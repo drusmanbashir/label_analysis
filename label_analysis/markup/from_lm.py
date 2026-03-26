@@ -1,6 +1,5 @@
 # %%
 from pathlib import Path
-from fastcore.basics import store_attr
 
 from label_analysis.helpers import get_labels, relabel, to_cc
 from label_analysis.geometry import LabelMapGeometry
@@ -23,7 +22,11 @@ class MarkupFromLabelmap():
         assert template in ['auto','liver'], "Pick a template; either 'auto' or 'liver' "
         if color:
             assert color in self.color_LUT.keys(), "Color has to be one of {}".format(self.color_LUT.keys())
-        store_attr()
+        self.ignore_labels = ignore_labels
+        self.dusting_threshold = dusting_threshold
+        self.template = template
+        self.color = color
+        self.shape = shape
         self.load_templates()
 
 

@@ -38,6 +38,10 @@ def lms_folder_statistics(
     if output_folder is None:
         output_folder = input_folder.parent / "label_analysis"
     output_folder = Path(output_folder)
+    out_fn = output_folder / ("lesion_stats.csv")
+    if out_fn.exists():
+        cprint(f"Skipping: {out_fn} already exists", color="red", bold=True)
+        return pd.read_csv(out_fn)
     fns_pt = list(input_folder.glob("*"))
     if len(fns_pt) == 0:
         raise ValueError(f"No files found in input folder: {input_folder}")
@@ -83,7 +87,6 @@ def lms_folder_statistics(
         resdf["pipeline_error_message"] = pipeline_msg
 
     maybe_makedirs([output_folder])
-    out_fn = output_folder / ("lesion_stats.csv")
     cprint(f"Saving to {out_fn}", color="green")
     resdf.to_csv(out_fn, index=False)
 
@@ -133,6 +136,13 @@ def plot_lesion_volume_distributions(
     n_chunks = math.ceil(len(ordered_cases) / chunk_size)
 
     for i in range(n_chunks):
+
+        out_fn = os.path.join(
+            output_folder, f"volume_length_dualaxis_chunk_{i+1:02d}.png"
+        )
+        if os.path.exists(out_fn):
+            cprint(f"Skipping: {out_fn} already exists", color="red", bold=True)
+            continue
         start = i * chunk_size
         end = start + chunk_size
         chunk_cases = ordered_cases[start:end]
@@ -226,9 +236,6 @@ def plot_lesion_volume_distributions(
 
         ax1.set_title("Volume and length distributions by case")
 
-        out_fn = os.path.join(
-            output_folder, f"volume_length_dualaxis_chunk_{i+1:02d}.png"
-        )
         plt.tight_layout()
         plt.savefig(out_fn, dpi=300)
         plt.close()
@@ -242,8 +249,6 @@ def end2end_lms_stats_and_plots(
         Path(output_folder) if output_folder else lis_folder.parent / "dataset_stats"
     )
     output_folder.mkdir(parents=True, exist_ok=True)
-    if any(output_folder.iterdir()):
-          raise OSError(errno.ENOTEMPTY, "Directory not empty", str(output_folder))
     ignore_labels = [] if ignore_labels is None else ignore_labels
     df = lms_folder_statistics(
         input_folder=lis_folder,

@@ -7,7 +7,6 @@ from typing import Union
 from label_analysis.utils import align_sitk_imgs
 import pandas as pd
 import SimpleITK as sitk
-from fastcore.basics import store_attr
 from label_analysis.helpers import *
 from label_analysis.overlap import (LabelMapGeometry, get_1lbl_nbrhoods,
                                     labels_overlap )
@@ -43,7 +42,9 @@ class MergeLabelMaps():
         self.lm1 = sitk.ReadImage(str(li_fn1))
         self.lm2 = sitk.ReadImage(str(li_fn2))
         assert(self.lm1.GetSize()==self.lm2.GetSize()),"Size mismatch between labelmaps. \nFile 1: {0},\nFile 2: {1}.\n------------------------------------".format(li_fn1,li_fn2)
-        store_attr('output_fname,remapping1,remapping2')
+        self.output_fname = output_fname
+        self.remapping1 = remapping1
+        self.remapping2 = remapping2
 
     def process(self):
         self.fix_lm1()
@@ -111,7 +112,11 @@ class MergeTouchingLabels(LabelMapGeometry):
         self.fil_bin = sitk.LabelShapeStatisticsImageFilter()
         self.fil_bin.ComputeOrientedBoundingBoxOn()
         self.fil_bin.Execute(self.lm_bin_cc)
-        store_attr()
+        self.lm = lm
+        self.li_fn = li_fn
+        self.dom_label = dom_label
+        self.ignore_labels = ignore_labels
+        self.threshold = threshold
 
 
     def process(self):
@@ -241,7 +246,7 @@ class MergeTouchingLabels(LabelMapGeometry):
 
 class MergeTouchingLabelsFiles():
         def __init__(self, ignore_labels=[]) -> None:
-            store_attr()
+            self.ignore_labels = ignore_labels
              
         def process_batch(self,li_fns,output_folder=None, overwrite=False):
             li_fns,li_fns_out = self.filter_files(li_fns,output_folder,overwrite)

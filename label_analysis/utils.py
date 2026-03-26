@@ -10,7 +10,6 @@ from torch import nn
 import itertools as il
 from fastcore.test import test_close
 import ast
-from fastcore.basics import store_attr
 import numpy as np
 from torch.functional import Tensor
 from utilz.imageviewers import ImageMaskViewer
@@ -98,7 +97,8 @@ class SITKDICOMOrient(Transform):
 class SITKImageMaskFixer():
     @str_to_path([1,2])
     def __init__(self,img_fn, mask_fn): 
-        store_attr()
+        self.img_fn = img_fn
+        self.mask_fn = mask_fn
         self.img,self.mask = map(sitk.ReadImage,[img_fn,mask_fn])
         self.dicom_orientation =  (1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0)
     def process(self,fix=True,outname=None):
@@ -358,7 +358,7 @@ class SITKImgMaskResize(ItemTransform):
 
 class SITKResize(Transform):
     def __init__(self,out_spacing):
-        store_attr()
+        self.out_spacing = out_spacing
     def encodes(self,img_sitk,is_label):
         out_size = get_sitk_target_size_from_spacings(img_sitk,self.out_spacing)
         _ ,out_origin,  _ ,out_direction= get_metadata(img_sitk)

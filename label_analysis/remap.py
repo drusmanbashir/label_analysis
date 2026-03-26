@@ -7,7 +7,6 @@ import numpy as np
 import pandas as pd
 import SimpleITK as sitk
 from fastcore.all import store_true
-from fastcore.basics import store_attr
 from label_analysis.helpers import (astype, get_labels, remove_organ_label,
                                    single_label, to_cc, to_int)
 from label_analysis.utils import align_sitk_imgs
@@ -43,7 +42,11 @@ class RemapFromDF:
 
         '''
             
-        store_attr()
+        self.df = df
+        self.dataset_fldr = dataset_fldr
+        self.target_label = target_label
+        self.organ_label = organ_label
+        self.schema = schema
         self.df = self.df.reset_index()  # prevents errors while concat
         if self.schema is None:
             self.schema = {"normal":2, "benign": 2, "mets": 3} # normal : 2 in case some cases labelled normal have some benign lesions
@@ -163,7 +166,7 @@ class RemapFromDF:
 class RemapFromMarkup:
     def __init__(self, organ_label: int = None):
         # organ_label, if specified. This is removed.
-        store_attr()
+        self.organ_label = organ_label
         self.fil = sitk.LabelShapeStatisticsImageFilter()
         self.fil.SetComputeFeretDiameter(True)
 
