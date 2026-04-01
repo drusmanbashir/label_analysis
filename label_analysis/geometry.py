@@ -418,13 +418,3 @@ if __name__ == "__main__":
         L.li_cc = sitk.Image()
 
 
-# %%
-    li_fn = "/home/ub/tmp.nii.gz"
-    lm = sitk.ReadImage(li_fn)
-    get_labels(lm)
-    lm_bin = to_binary_np(lm,1)
-    get_labels(lm_bin)
-    sitk.WriteImage(lm_bin,"/home/ub/lm_bin2.nii.gz")
-    sitk.WriteImage(L.li_cc,"lmcc.nii.gz")
-# %%
-    

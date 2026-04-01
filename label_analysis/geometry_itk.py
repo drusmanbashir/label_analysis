@@ -1,4 +1,5 @@
 # %%
+from dataclasses import dataclass
 import logging
 import re
 import itertools as il
@@ -12,15 +13,23 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
+from sympy import field
 from tqdm import tqdm
+from utilz.cprint import cprint
+from utilz.fileio import maybe_makedirs
 from utilz.helpers import set_autoreload
 from utilz.imageviewers import ImageMaskViewer
-from utilz.itk_sitk import (ConvertItkImageToSimpleItkImage,
-                            ConvertSimpleItkImageToItkImage,
-                            monai_to_sitk_image)
+from utilz.itk_sitk import (
+    ConvertItkImageToSimpleItkImage,
+    ConvertSimpleItkImageToItkImage,
+    monai_to_sitk_image,
+)
 
-from label_analysis.geometry import (LabelMapGeometry,
-                                     load_labelmap_like_to_sitk, make_zero_df)
+from label_analysis.geometry import (
+    LabelMapGeometry,
+    load_labelmap_like_to_sitk,
+    make_zero_df,
+)
 from label_analysis.helpers import *
 from label_analysis.helpers import to_label
 
@@ -29,6 +38,37 @@ LabelT = itk.UC
 Dim = 3
 U8 = itk.UC
 U8Img = itk.Image[U8, Dim]
+
+pd.options.display.max_columns = 10
+
+@dataclass
+class LabelObj:
+    ind: int
+    obj: itk.StatisticsLabelObject[itk.UL, 3]
+    lm: itk.LabelMap[itk.StatisticsLabelObject[itk.UL, 3]]
+    label_org: int
+
+    def relabel(self, new_label: int):
+        self.obj.SetLabel(new_label)
+
+@dataclass
+class LabelObjSet:
+    objs: list[LabelObj]
+    inds: list[int]
+    _map: dict[int, LabelObj] = field(init=False, repr=False)
+
+    def __post_init__(self):
+        self._map = {o.ind: o for o in self.objs}
+
+    def __getitem__(self, ind):
+        return self._map[ind]
+
+    def remove(self, ind: int):
+        obj = self._map.pop(ind)          # remove from map
+        self.objs.remove(obj)             # remove from list
+        self.inds.remove(ind)     
+
+
 
 
 def label_to_labelmap(li_org, lab, compute_feret=True):
@@ -99,6 +139,8 @@ def region_to_flat(region):
 
 
 class LabelMapGeometryITK(LabelMapGeometry):
+    # unique labels are a composite of
+    # nbrhoods is a first class citizen  - centre of every ops
     def __init__(
         self,
         li: Union[itk.Image, sitk.Image, str, Path],
@@ -125,34 +167,34 @@ class LabelMapGeometryITK(LabelMapGeometry):
             self.li_org = relabel_itk(self.li_org, remove_labels)
             self.li_sitk = relabel(self.li_sitk, remove_labels)
         self.img = img
-
+        self._compute_feret = compute_feret
         self.create_li_binary()
-        self.create_li_cc(
-            compute_feret=compute_feret
-        )  # creates ordered labelmap from original labels and a key mapping
+        self.create_li_cc()  # creates ordered labelmap from original labels and a key mapping
         self.calc_geom()
 
     def create_li_binary(self):
         self.li_binary = create_binary_image(self.li_org, 1)
 
+    @property
+    def compute_feret(self):
+        return self._compute_feret
 
-    def create_li_cc(self, compute_feret=True):
+    def create_li_cc(self, compute_feret=None):
+        if compute_feret is not None:
+            self._compute_feret = compute_feret
         self.key = {}
         self.unique_lms = []
         self.unique_lms_index_by_label_org = {}
-
         labels_org = get_labels_itk(self.li_org)
         self.li_cc = _alloc_cc_image(self.li_org)
-
-        if not labels_org:
-            return
-
+        label_cont = 1
         for lab in labels_org:
-            lmap = label_to_labelmap(self.li_org, lab, compute_feret)
-
-            for cc in lmap.GetLabels():
-                self.key[int(cc)] = lab
-
+            lmap = label_to_labelmap(self.li_org, lab, self.compute_feret)
+            for i in range(lmap.GetNumberOfLabelObjects()):
+                obj = lmap.GetNthLabelObject(i)
+                obj.SetLabel(label_cont)
+                self.key[label_cont] = lab
+                label_cont += 1
             self.unique_lms.append(
                 {
                     "lmap": lmap,
@@ -161,13 +203,12 @@ class LabelMapGeometryITK(LabelMapGeometry):
                 }
             )
             self.unique_lms_index_by_label_org[int(lab)] = len(self.unique_lms) - 1
-
             self.li_cc = _merge_labelmap_into(self.li_cc, lmap)
 
     def calc_geom(self):
         columns = [
             "label_org",
-            "label_cc",
+            "label_org_cc",
             "cent",
             "bbox",
             "flatness",
@@ -191,7 +232,7 @@ class LabelMapGeometryITK(LabelMapGeometry):
                 # If they're substantially negative, that's not just rounding noise
                 if np.any(mom < -1e-6):
                     logging.warning(
-                        "Negative principal moments (label_org=%s, label_cc=%s): %s",
+                        "Negative principal moments (label_org=%s, label_org_cc=%s): %s",
                         label_org,
                         int(obj.GetLabel()),
                         mom,
@@ -203,14 +244,13 @@ class LabelMapGeometryITK(LabelMapGeometry):
                     float(np.median(mom)),
                     float(mom.min()),
                 )
-
                 major_axis = 4.0 * np.sqrt(major_m)
                 minor_axis = 4.0 * np.sqrt(mid_m)
                 least_axis = 4.0 * np.sqrt(least_m)
                 rows.append(
                     {
                         "label_org": label_org,
-                        "label_cc": int(obj.GetLabel()),
+                        "label_org_cc": int(obj.GetLabel()),
                         "cent": tuple(obj.GetCentroid()),
                         "bbox": obj.GetBoundingBox(),
                         "flatness": float(obj.GetFlatness()),
@@ -234,37 +274,37 @@ class LabelMapGeometryITK(LabelMapGeometry):
         self.nbrhoods["bbox"] = self.nbrhoods["bbox"].apply(region_to_flat)
         self.nbrhoods["label"] = self.nbrhoods["label_org"].astype(int)
         self.nbrhoods["volume"] = self.nbrhoods["volume_cc"]
+        self.gen_label_cont()
+
+    def gen_label_cont(self):
+        self.nbrhoods["label_cont"] = range(1, len(self.nbrhoods) + 1)
 
     def _relabel(self, remapping, verbose=True):
         li_cc_sitk = ConvertItkImageToSimpleItkImage(self.li_cc, sitk.sitkUInt8)
-        li_cc_sitk= relabel(li_cc_sitk, remapping)
+        li_cc_sitk = relabel(li_cc_sitk, remapping)
         self.li_cc = ConvertSimpleItkImageToItkImage(li_cc_sitk, itk.US)
-        if verbose==True:
+        if verbose == True:
             logging.warning(
                 "Labelmap labels have been changed. The nbrhoods df is still as before"
             )
 
-
-
-    def dust(self, dusting_threshold, remove_flat=True): # in geom
+    def dust(self, dusting_threshold, remove_flat=True):  # in geom
         if not self.is_empty():
-            # dust below length threshold
-            inds_small = [l < dusting_threshold for l in self.ferets.values()]
-            self.labels_small = list(il.compress(self.labels, inds_small))
-            if remove_flat == True and len(self.nbrhoods) > 0:
-                labs_flat = self.nbrhoods["label_cc"][
-                    self.nbrhoods["flatness"] == 0
-                ].tolist()
-                print("Removing flat (2D) labels: ")
-                self.remove_labels(labs_flat)
+            size_metric = "major_axis" if self.compute_feret == False else "feret"
+            inds_small = self.nbrhoods[size_metric] < dusting_threshold
+            if remove_flat == True:
+                inds_flat = self.nbrhoods["flatness"] == 0
+                inds_small = inds_small | inds_flat
+            inds_small_final = self.nbrhoods.loc[inds_small].index
+            self.remove_labelobjects(inds_small_final)
+            self.nbrhoods = self.nbrhoods.drop(inds_small_final)
 
-
-    def remove_labels(self, labels): 
+    def remove_labels_from_df(self, labels):
         labels = listify(labels)
         remapping = {x: 0 for x in labels}
         print("Removing labels {0}".format(labels))
         self._relabel(remapping)
-        self.nbrhoods = self.nbrhoods[~self.nbrhoods["label_cc"].isin(labels)]
+        self.nbrhoods = self.nbrhoods[~self.nbrhoods["label_org_cc"].isin(labels)]
         self.nbrhoods.reset_index(inplace=True, drop=True)
         for l in labels:
             del self.key[l]
@@ -285,15 +325,15 @@ class LabelMapGeometryITK(LabelMapGeometry):
                 )
             ) from exc
 
-    def remove_rows(self, rows_for_removal):
-        if len(rows_for_removal) > 0:
-            nbr_tmp = self.nbrhoods[rows_for_removal].copy()
+    def remove_labelobjects(self, df_inds):
+        if len(df_inds) > 0:
+            nbr_tmp = self.nbrhoods.iloc[df_inds].copy()
             for ind, row in nbr_tmp.iterrows():
                 label_org = row["label_org"]
                 lobj_ind = self._get_unique_lms_index(label_org)
-                label_cc = int(row["label_cc"])
+                label_org_cc = int(row["label_org_cc"])
                 lmap = self.unique_lms[lobj_ind]["lmap"]
-                lmap.RemoveLabel(label_cc)
+                lmap.RemoveLabel(label_org_cc)
                 dici = {
                     "lmap": lmap,
                     "label_org": label_org,
@@ -322,10 +362,12 @@ class LabelMapGeometryITK(LabelMapGeometry):
         else:
             self.li_out = None
 
+    def __len__(self):
+        return len(self.nbrhoods)
 
     @property
     def li_binary_sitk(self):
-            return ConvertItkImageToSimpleItkImage(self.li_binary, sitk.sitkUInt8)
+        return ConvertItkImageToSimpleItkImage(self.li_binary, sitk.sitkUInt8)
 
     @property
     def li_cc_sitk(self):
@@ -333,36 +375,42 @@ class LabelMapGeometryITK(LabelMapGeometry):
 
     @property
     def labels(self):
-        if not hasattr(self, "nbrhoods"):
-            labels = []
-            for lm_dict in self.unique_lms:
-                labels.extend(int(label) for label in lm_dict["lmap"].GetLabels())
-            return labels
-        zeros = (self.nbrhoods==0).all().all()
-        if self.nbrhoods.empty or zeros==True:
+        if self.nbrhoods.empty:
             return []
-            
-        return self.nbrhoods["label_cc"].astype(int).tolist()
+        return self.nbrhoods.label_cont.tolist()
 
     @property
     def length(self):
-        return self.ferets
+        if self.compute_feret == False:
+            lngth = self.nbrhoods["major_axis"].astype(float).to_dict()
+            return lngth
+        else:
+            return self.ferets
 
     @property
     def ferets(self):
         if self.nbrhoods.empty:
             self._ferets = {}
+        elif self.compute_feret == False:
+            cprint("compute_feret=False. Using major_axis insetead of feret", "yellow")
+            return self.lengths
         else:
-            self._ferets = (
-                self.nbrhoods.set_index("label_cc")["feret"].astype(float).to_dict()
-            )
+            self._ferets = self.nbrhoods["feret"].astype(float).to_dict()
         return self._ferets
+
+    @property
+    def lengths(self):
+        if self.nbrhoods.empty:
+            self._lengths = {}
+        else:
+            self._lengths = self.nbrhoods["major_axis"].astype(float).to_dict()
+        return self._lengths
 
     @property
     def volumes(self):
         if self.nbrhoods.empty:
             return {}
-        return self.nbrhoods.set_index("label_cc")["volume_cc"].astype(float).to_dict()
+        return self.nbrhoods["volume_cc"].astype(float).to_dict()
 
     @property
     def volume_total(self):
@@ -371,44 +419,96 @@ class LabelMapGeometryITK(LabelMapGeometry):
         )
 
 
-
 class BBoxInfoFromITK(LabelMapGeometryITK):
-    '''
+    """
     Fast read-only class for nbrhoods. Do not attempt to use other methods from parent classes, not guaranteed to work
-    '''
+    """
 
     def __init__(
         self,
         li,
         ignore_labels=[],
-        ):
-        if isinstance(li,str|Path): li = itk.imread(li)
+    ):
+        if isinstance(li, str | Path):
+            li = itk.imread(li)
         self.li_org = li
         self.ignore_labels = ignore_labels
         self.create_li_cc(False)
         self.calc_geom()
-        self.nbrhoods = self.nbrhoods[~self.nbrhoods["label_org"].isin(self.ignore_labels)]
+        self.nbrhoods = self.nbrhoods[
+            ~self.nbrhoods["label_org"].isin(self.ignore_labels)
+        ]
+
 
 # %%
 
 # SECTION:-------------------- setup-------------------------------------------------------------------------------------- <CR>
 if __name__ == "__main__":
 # %%
+    set_autoreload()
     fns = [
         "/s/fran_storage/predictions/nodes/LITS-1405_LITS-1416_LITS-1417/nodes_140_Ta70413_ABDOMEN_2p00.nii.gz",
         "/s/fran_storage/predictions/nodes/LITS-1405_LITS-1416_LITS-1417/nodes_n1_Ta80605_CAP1p5mm.nii.gz",
     ]
 
+    gt_fn = Path("/media/UB/datasets/kits23/lms/kits23_00568.nii.gz")
+    outfldr = Path("/media/UB/tmp")
+    maybe_makedirs(outfldr)
+    out_fn = outfldr / (gt_fn.name)
 
-    gt_fn = Path("/media/UB/datasets/kits23_short/lms/kits23_00005.nii.gz")
+    org_fn = outfldr / ("org.nii.gz")
+    sitk_fn = outfldr / ("kits23_00568_sitk.nii.gz")
+# %%
+    L = LabelMapGeometryITK(gt_fn, ignore_labels=[1], compute_feret=False)
+    L.nbrhoods
+    L.unique_lms
+    lm = L.unique_lms[0]
 
 # %%
-    L = LabelMapGeometryITK(gt_fn, ignore_labels=[1])
+    dusting_threshold = 1
+
+    L2.dust(1)
+
+    L2 = LabelMapGeometryITK(gt_fn, ignore_labels=[1], compute_feret=False)
+    L2.unique_lms
+# %%
+    itk.imwrite(L2.li_cc, sitk_fn)
+    L2.nbrhoods
+    lm = L2.unique_lms[0]
+    ind = inds_small[0]
+    L2.dust(1)
+    rows = L.nbrhoods.iloc[inds_small]
+    label_org = row["label_org"]
+    label_cc = row["label_cc"]
+
+    L.unique_lms
+
+# %%
+    label_org = row["label_org"]
+    lobj_ind = L._get_unique_lms_index(label_org)
+    label_cc = int(row["label_cc"])
+    lmap = L.unique_lms[lobj_ind]["lmap"]
+    lmap.RemoveLabel(label_cc)
+    dici = {
+        "lmap": lmap,
+        "label_org": label_org,
+        "n_islands": lmap.GetNumberOfLabelObjects(),
+    }
+    L.unique_lms[lobj_ind] = dici
+
+# %%
+# %%
+    itk.imwrite(L.li_org, org_fn)
+    itk.imwrite(L.li_cc, out_fn)
+    sitk.WriteImage(L.li_sitk, sitk_fn)
 # %%
     L.dust(1)
     L.labels
     get_labels(L.li_cc_sitk)
     get_labels_itk(L.li_cc)
+# %%
+    cc = L.li_cc
+    org = L.li_org
 # %%
 
     nodes_fldr = Path("/s/fran_storage/predictions/nodes/LITS-1405_LITS-1416_LITS-1417")
@@ -460,6 +560,9 @@ if __name__ == "__main__":
     ImageMaskViewer([im, lm])
     L = LabelMapGeometryITK(lm)
     L.nbrhoods
+    from label_analysis.helpers import get_labels_itk
 
+    get_labels_itk(L.li_cc)
 
 # %%
+

@@ -8,6 +8,13 @@ from fran.data.dataregistry import DS
 
 
 
+
+def remove_zero_from_list(func):
+    def _inner(*args, **kwargs):
+        output = func(*args, **kwargs)
+        output = [x for x in output if x != 0]
+        return output
+    return _inner
 #
 #
 @dataclass
@@ -17,6 +24,12 @@ class Structure:
     label_localiser: int | list
     label_minimal: int | list
     location: str
+
+    def __getattribute__(self, structure: str):
+        value = object.__getattribute__(self, structure)
+        if isinstance(value, list):
+            value = [v for v in value if v != 0]
+        return value
 
 
 #
@@ -77,6 +90,8 @@ class TotalSegmenterLabels:
         self.df = pd.read_excel(meta_fn, sheet_name="labels")
         self.meta = pd.read_excel(meta_fn, sheet_name="meta")
 
+
+    @remove_zero_from_list
     def get_labels(self, organ="label_full", side=None, localiser=False):
         """
         Retrieve labels filtered by organ and side.
@@ -107,6 +122,7 @@ class TotalSegmenterLabels:
             labs_out = labs["label_localiser"].to_list()
         return labs_out
 
+    @remove_zero_from_list
     def get_label_by_name(self, name: str, group: str):
         """
         Return unique numeric `label_localiser` values for rows whose
@@ -173,6 +189,7 @@ class TotalSegmenterLabels:
             return [srcs, dests]
 
     @property
+    @remove_zero_from_list
     def label_full(self):
         """
         List[int]: Retrieve label_full label IDs.
@@ -191,10 +208,12 @@ class TotalSegmenterLabels:
     #     """
     #     return self.df.label_short.to_list()
     @property
+    @remove_zero_from_list
     def label_localiser(self):
         return self.df.label_localiser.to_list()
 
     @property
+    @remove_zero_from_list
     def label_minimal(self):
         return self.df.label_minimal.to_list()
 
@@ -383,5 +402,26 @@ if __name__ == "__main__":
     src_labels = TSL.df[src_labels]
     src_labels = src_labels.tolist()
     pairs = set(zip(src_labels, dest_struc))
+
+# %%
+    def nozero(func):
+        def _inner(*args, **kwargs):
+            output = func(*args, **kwargs)
+            print(output)
+            output = output[output != 0]
+            print(output)
+            return output
+
+        return _inner
+
+    
+# %%
+    @nozero
+    def listi():
+        return [0,1, 2, 3]
+    
+
+    listi()
+# %%
 
 # %%
