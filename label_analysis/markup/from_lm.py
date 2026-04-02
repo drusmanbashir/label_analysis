@@ -83,7 +83,7 @@ class MarkupFromLabelmap():
             return dic_out
 
     def create_label_markup(self,lg, label:int, color:list, prefix:str, suffix=''):
-        nbr_short= lg.nbrhoods.query('label=={}'.format(label))
+        nbr_short= lg.nbrhoods.query('label_org=={}'.format(label))
         cps = []
         for ind in range(len(nbr_short)):
             id = str(ind+1)

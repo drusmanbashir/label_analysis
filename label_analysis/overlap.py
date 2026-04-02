@@ -119,7 +119,7 @@ def get_1lbl_nbrhoods(labelmap, label, dusting_threshold=5):
         vals.append([l, rad, centroid])
 
     df = pd.DataFrame(vals, columns=["label_cc", "rad", "cent"])
-    df["label"] = label
+    df["label_org"] = label
     return lm_cc, df
 
 
@@ -268,8 +268,8 @@ class ScorerLabelMaps:
             return ["_".join([prefix, "pred", "label", "dummy"])]
         for ind in self.LP.nbrhoods.index:
             label_cc = self.LP.nbrhoods.loc[ind, "label_cc"]
-            label = self.LP.nbrhoods.loc[ind, "label"]
-            colname = "_".join([prefix, "pred", "label", str(label), str(label_cc)])
+            label_org = self.LP.nbrhoods.loc[ind, "label_org"]
+            colname = "_".join([prefix, "pred", "label", str(label_org), str(label_cc)])
             colnames.append(colname)
         return colnames
 
@@ -472,8 +472,8 @@ class ScorerFiles(ScorerLabelMaps):
             return ["_".join([prefix, "pred", "label", "dummy"])]
         for ind in self.LP.nbrhoods.index:
             label_cc = self.LP.nbrhoods.loc[ind, "label_cc"]
-            label = self.LP.nbrhoods.loc[ind, "label"]
-            colname = "_".join([prefix, "pred", "label", str(label), str(label_cc)])
+            label_org = self.LP.nbrhoods.loc[ind, "label_org"]
+            colname = "_".join([prefix, "pred", "label", str(label_org), str(label_cc)])
             colnames.append(colname)
         return colnames
 
@@ -1154,6 +1154,7 @@ if __name__ == "__main__":
     cc = load_json(cc_fn)
     point = load_json(point_fn)
     L = LabelMapGeometry(lm)
+# %%
     L.nbrhoods
     L.fil.ComputeOrientedBoundingBoxOn()
     L.Execute(L.lm_cc)
