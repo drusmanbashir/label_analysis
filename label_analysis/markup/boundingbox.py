@@ -17,6 +17,8 @@ import argparse
 
 from utilz.helpers import set_autoreload
 
+set_autoreload()
+
 from label_analysis.helpers import get_labels, to_cc
 from label_analysis.geometry import LabelMapGeometry
 from utilz.fileio import load_json
@@ -319,8 +321,6 @@ def main():
 if __name__ == "__main__":
 # %%
 #SECTION:-------------------- SETUP--------------------------------------------------------------------------------------
-    set_autoreload()
-
     li_fn = "/home/ub/code/label_analysis/label_analysis/files/two_lesions.nrrd"
     lm2_fn = "/home/ub/Documents/nodes_90_411Ta_CAP1p5SoftTissue.nii.gz_2-Segment_1-label.nrrd"
     point2_fn = "/home/ub/Documents/nodes_90.mrk.json"

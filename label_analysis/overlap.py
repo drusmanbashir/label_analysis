@@ -3,34 +3,31 @@ import sys
 from functools import reduce
 
 import networkx as nx
+from label_analysis.geometry import LabelMapGeometry, load_labelmap_like_to_sitk
+from label_analysis.geometry_itk import LabelMapGeometryITK
+from label_analysis.geometry_pt import LabelMapGeometryPT
 from utilz.cprint import cprint
 from utilz.dictopts import key_from_value
 
-from label_analysis.geometry import (LabelMapGeometry,
-                                     load_labelmap_like_to_sitk)
-from label_analysis.geometry_itk import LabelMapGeometryITK
-from label_analysis.geometry_pt import LabelMapGeometryPT
-
 sys.path += ["/home/ub/code"]
-import itertools as il
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import SimpleITK as sitk
-from utilz.fileio import load_json, maybe_makedirs
+from label_analysis.helpers import *
+from utilz.fileio import maybe_makedirs
 from utilz.helpers import *
 from utilz.imageviewers import *
 from utilz.stringz import info_from_filename, match_filenames
 
-from label_analysis.helpers import *
-
 np.set_printoptions(linewidth=250)
 np.set_printoptions(formatter={"float": lambda x: "{0:0.2f}".format(x)})
 
-pd.set_option("display.width", 200)           # total line width before
-pd.set_option("display.max_columns", None)    # show all columns
-pd.set_option("display.max_colwidth", 25)     # truncate long cell contents
+pd.set_option("display.width", 200)  # total line width before
+pd.set_option("display.max_columns", None)  # show all columns
+pd.set_option("display.max_colwidth", 25)  # truncate long cell contents
+
 
 def fk_generator(start=0):
     key = start
@@ -48,9 +45,9 @@ def keep_largest(onedarray):
 @astype([5, 5], [0, 1])
 def labels_overlap(gt_cc, pred_cc, lab_gt, lab_pred, compute_jaccard=True):
     gt_all_labels = get_labels(gt_cc)
-    assert (
-        lab_gt in gt_all_labels
-    ), "Label {} is not present in the Groundtruth ".format(lab_gt)
+    assert lab_gt in gt_all_labels, (
+        "Label {} is not present in the Groundtruth ".format(lab_gt)
+    )
     mask2 = single_label(gt_cc, lab_gt)
     pred2 = single_label(pred_cc, lab_pred)
     fil = sitk.LabelOverlapMeasuresImageFilter()
@@ -196,7 +193,6 @@ class ScorerLabelMaps:
         print("Dusting Pred")
         self.LP.dust(self.dusting_threshold)
         print("-" * 20)
-
 
     def compute_overlap_overall(self):
         if self.empty_lm == "both":
@@ -364,9 +360,11 @@ class ScorerLabelMaps:
     @property
     def labs_gt(self):
         return self.LG.labels
+
     @property
     def labs_pred(self):
         return self.LP.labels
+
 
 class ScorerFiles(ScorerLabelMaps):
     """
@@ -710,8 +708,8 @@ class ScorerAdvanced(ScorerFiles):
             dici.update(labels)
             self.df2.append(dici)
         self.df2 = pd.DataFrame(self.df2)
-        self.LG._relabel(gt_remaps)
-        self.LP._relabel(pred_remaps)
+        self.LG._relabel_li_cc(gt_remaps)
+        self.LP._relabel_li_cc(pred_remaps)
 
         redsc_labels = self.df2.loc[self.df2["recompute_dsc"] == True, "fk"].tolist()
         prox_labels = [[a, a] for a in redsc_labels]
@@ -722,7 +720,7 @@ class ScorerAdvanced(ScorerFiles):
         self.df2.loc[self.df2["fk"].isin(redsc_labels), "dsc"] = self.dsc_multi
 
     def insert_fks(self, nbrhoods, label_key):
-        colnames = ["label", "cent", "length", "volume", "label_cc", "fk"]
+        colnames = ["label_org", "cent", "feret", "volume_cc", "label_cc", "fk"]
         dfs = []
         for i in range(len(self.df2)):
             cluster = self.df2.iloc[i]
@@ -793,31 +791,29 @@ class ScorerAdvanced(ScorerFiles):
         return self.df_final
 
     def generate_fake_df2(self):
-            fake_labels = {
-                    "fk" :-3,    # # # any fk -3 rows should be removed
-                "pred_label_cc": None,
-                "gt_label_cc": None,
-                "recompute_dsc": False,
-                "dsc": None,
-            }
-            self.df2 = pd.DataFrame(fake_labels, index=[0])
-
-
+        fake_labels = {
+            "fk": -3,  # # # any fk -3 rows should be removed
+            "pred_label_cc": None,
+            "gt_label_cc": None,
+            "recompute_dsc": False,
+            "dsc": None,
+        }
+        self.df2 = pd.DataFrame(fake_labels, index=[0])
 
     def process(self, debug=False):
-            print("Processing {}".format(self.case_id))
-            self.dust()
-            self.compute_overlap_overall()
-            if self.empty_lm == "neither":
-                self.compute_overlap_perlesion()
-                self.recompute_overlap_perlesion()
-            self.insert_dsc_fks()
-            # else:
-            #     self.generate_fake_df2()
-            self.gt_radiomics(debug)
-            df = self.create_df_full()
-            return df
-        
+        print("Processing {}".format(self.case_id))
+        self.dust()
+        self.compute_overlap_overall()
+        if self.empty_lm == "neither":
+            self.compute_overlap_perlesion()
+            self.recompute_overlap_perlesion()
+        self.insert_dsc_fks()
+        # else:
+        #     self.generate_fake_df2()
+        self.gt_radiomics(debug)
+        df = self.create_df_full()
+        return df
+
 
 class ScorerAdvancedITK(ScorerAdvanced):
     geometry_cls = LabelMapGeometryITK
@@ -884,9 +880,16 @@ class ScorerAdvancedITK(ScorerAdvanced):
                 self.dsc[ind_pair[0], ind_pair[1]] = sc[0]
                 self.jac[ind_pair[0], ind_pair[1]] = sc[1]
 
-
     def insert_fks(self, nbrhoods, label_key):
-        colnames = ["label", "cent", "major_axis", "volume_cc", "label_cc", "fk", "feret"]
+        colnames = [
+            "label",
+            "cent",
+            "major_axis",
+            "volume_cc",
+            "label_cc",
+            "fk",
+            "feret",
+        ]
         dfs = []
         for i in range(len(self.df2)):
             cluster = self.df2.iloc[i]
@@ -915,7 +918,6 @@ class ScorerAdvancedITK(ScorerAdvanced):
         df_output = pd.concat([df_matched, df_unmatched], axis=0)
         return df_output
 
-
     def compute_overlap_overall(self):
         if self.empty_lm == "both":
             self.dsc_overall, self.jac_overall = np.nan, np.nan
@@ -926,6 +928,8 @@ class ScorerAdvancedITK(ScorerAdvanced):
             self.dsc_overall, self.jac_overall = labels_overlap(
                 self.LG.li_binary_sitk, self.LP.li_binary_sitk, 1, 1
             )
+
+
 class ScorerAdvancedPT(ScorerAdvancedITK):
     geometry_cls = LabelMapGeometryPT
 
@@ -986,11 +990,11 @@ class BatchScorer:
                 )
                 df = self.S.process(debug=self.debug)
             except Exception as e:
-                        msg = "Error processing case_id={} gt_fn={} pred_fn={}".format(
-                            self.S.case_id, self.S.gt_fn, self.S.pred_fn
-                        )
-                        logging.exception(msg)
-                        raise RuntimeError(msg) from e
+                msg = "Error processing case_id={} gt_fn={} pred_fn={}".format(
+                    self.S.case_id, self.S.gt_fn, self.S.pred_fn
+                )
+                logging.exception(msg)
+                raise RuntimeError(msg) from e
 
             self.dfs.append(df)
             self.store_tmp_df()
@@ -1021,7 +1025,7 @@ class BatchScorer:
             case_id = info_from_filename(gt_fn.name, full_caseid=True)["case_id"]
             pred_fn = [fn for fn in pred_fns if case_id in fn.name]
             if len(pred_fn) != 1:
-                cprint(f"Multiple predictions for {pred_fn}",color="red")
+                cprint(f"Multiple predictions for {pred_fn}", color="red")
                 raise RuntimeError
             else:
                 pred_fn = pred_fn[0]
@@ -1074,7 +1078,6 @@ class BatchScorer:
 
 
 class BatchScorer2(BatchScorer):
-
     def __init__(
         self,
         output_suffix,
@@ -1091,9 +1094,9 @@ class BatchScorer2(BatchScorer):
         debug=False,
     ):
         self.output_suffix = output_suffix
-        assert isinstance(
-            output_suffix, int
-        ), "Need integer output_suffix, got {}".format(output_suffix)
+        assert isinstance(output_suffix, int), (
+            "Need integer output_suffix, got {}".format(output_suffix)
+        )
         super().__init__(
             gt_fns,
             preds_fldr,
@@ -1132,8 +1135,14 @@ class BatchScorerITK(BatchScorer2):
 class BatchScorerPT(BatchScorerITK):
     scorer_cls = ScorerAdvancedPT
 
+
 if __name__ == "__main__":
+# %%
 # SECTION:-------------------- SETUP-------------------------------------------------------------------------------------- <CR> <CR> <CR>
+    from fran.data.dataregistry import DS
+    from fran.managers.project import is_sitk_file
+    from utilz.fileio import load_json
+
     preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc")
     preds_fldr = Path("/s/fran_storage/predictions/litsmc/LITS-1018_fixed_mc")
     res_fldr = preds_fldr / "results"
@@ -1142,114 +1151,45 @@ if __name__ == "__main__":
 
     gt_fns = list(gt_fldr.glob("*"))
 
-# %%
 
-    lm_fn = "/home/ub/code/label_analysis/label_analysis/files/two_lesions.nrrd"
-    cc_fn = "/home/ub/code/label_analysis/label_analysis/files/two_lesions_cc.mrk.json"
-    point_fn = (
-        "/home/ub/code/label_analysis/label_analysis/files/two_lesions_point.mrk.json"
-    )
-    lm = sitk.ReadImage(lm_fn)
-
-    cc = load_json(cc_fn)
-    point = load_json(point_fn)
-    L = LabelMapGeometry(lm)
-# %%
-    L.nbrhoods
-    L.fil.ComputeOrientedBoundingBoxOn()
-    L.Execute(L.lm_cc)
-    sitk.WriteImage(
-        L.lm_cc, "/home/ub/code/label_analysis/label_analysis/files/two_lesions_cc.nii"
-    )
-# %%
-
-    L = LabelMapGeometryITK(lm)
-    L.lm_org.GetOrigin()
-    L.lm_org.GetSpacing()
-    L.fil.GetBoundingBox(1)
-
-    print(org1, "\n", bb1)
-
-    org2 = L.fil.GetOrientedBoundingBoxOrigin(2)
-    bb2 = L.fil.GetOrientedBoundingBoxSize(2)
-    bb2_end = [a + b for a, b in zip(org2, bb2)]
-    # L.fil.GetOrientedBoundingBoxDirection(2)
-
-    print(org2, "\n", bb2, "\n", bb2_end)
-
-    print(org1)
-    print(bb1)
-    print(org2)
-    print(bb2)
-# %%
-
-    mup = cc["markups"]
-    len(mup)
-    mup[0].keys()
-# %%
-
-# %%
-    lm = to_int(L.li_cc)
-    L.fil.GetOrientedBoundingBoxDirection(1)
-    L.fil.GetBoundingBox(1)
-    L.fil.Execute(lm)
-    L.fil.GetOrientedBoundingBoxDirection(lm)
-# %%
-    pd.set_option("display.max_colwidth", None)
-# %%
-    dfs = []
-    for fn in fns:
-        df = pd.read_csv(fn)
-        dfs.append(df)
-    partial_df = None
-
-    partial_df = pd.concat(dfs)
-# %%
-    # maybe_makedirs(preds_fldr/("results"))
-    # "crc_CRC004_20190425_CAP1p5.nii.gz"; //"/s/fran_storage/predictions/lidc2/LITS-911/lung_020.nii.gz"; %%
-    preds_nnunet_fldr = Path("/s/datasets_bkp/ark/")
-    gt_fns = [fn for fn in gt_fns if is_sitk_file(fn)]
-
-    # ub_df_fn = "/s/fran_storage/predictions/litsmc/LITS-933_fixed_mc/results/results_thresh1mm.xlsx"
-    # results_df = pd.read_excel(ub_df_fn)
-    # partial_df = results_df
-    imgs_fldr = Path("/s/xnat_shadow/crc/completed/images")
-
-# %%
-# SECTION:-------------------- BATCH PT-------------------------------------------------------------------------------------- <CR>
-
-    from utilz.helpers import info_from_filename
     from fran.managers.project import Project
-    P = Project("kits")
+    from utilz.helpers import info_from_filename
 
-    _, val = P.get_train_val_case_ids(0) 
-    gt_fldr = Path("/r/datasets/preprocessed/kits/lbd/spc_080_080_150_rlb00ec4022_rlb00ec4022_ex020/lms")
-    gt_fns = sorted(gt_fldr.glob("*.pt"))
-    val_fns =[fn for fn in gt_fns  if info_from_filename(fn.name, full_caseid=True)["case_id"] in val]
-    len(val_fns)
+    P = Project("kits2")
+
+    _, val = P.get_train_val_case_ids(fold=1)
+    gt_fldr = Path(
+        "/r/datasets/preprocessed/kits/lbd/spc_080_080_150_rlb00ec4022_rlb00ec4022_ex020/lms"
+    )
+
+    kits_fldr = DS.kits23.folder / ("images")
+    kits_fldr_lms =DS.kits23.folder / ("lms")
+    kits_imgs = list(kits_fldr.glob("*"))
+    lms_kits = list(kits_fldr_lms.glob("*"))
+
+    val_fns_kits = [
+        fn
+        for fn in lms_kits
+        if info_from_filename(fn.name, full_caseid=True)["case_id"] in val
+        ]
+
+    preds_fldr = Path("/s/fran_storage/predictions/kits2/KITS2-bah")
+    # gt_fns2 = gt_fns[:5]+ [Path("/r/datasets/preprocessed/kits/lbd/spc_080_080_150_rlb00ec4022_rlb00ec4022_ex020/lms/kits23_00030.pt")]
+
+    pred_fns = [
+        fn
+        for fn in preds_fldr.glob("*")
+        if info_from_filename(fn.name, full_caseid=True)["case_id"] in val
+    ]
+    len(pred_fns)
+# %%
+#SECTION:-------------------- BATCH SCORER--------------------------------------------------------------------------------------
+
+    debug_ = True
     ignore_labels_gt = [1]
     ignore_labels_pred = [1]
-    # preds_fldr = Path("/s/fran_storage/predictions/kits/KITS-n7")
-    preds_fldr = Path("/s/fran_storage/predictions/kits/KITS-TW")
-    preds_fldr = Path("/s/fran_storage/predictions/kits/KITS-bl")
-    # gt_fns2 = gt_fns[:5]+ [Path("/r/datasets/preprocessed/kits/lbd/spc_080_080_150_rlb00ec4022_rlb00ec4022_ex020/lms/kits23_00030.pt")]
-    pred_fns = [fn for fn in preds_fldr.glob("*") if info_from_filename(fn.name, full_caseid=True)["case_id"] in val]
-    # pred_fn="/s/fran_storage/predictions/kits/KITS-n7/kits23_00011.pt"
-
-    gt_fldr = Path("/r/datasets/preprocessed/kits/lbd/spc_080_080_150_rlb00ec4022_rlb00ec4022_ex020/lms")
-    gt_fns = list(gt_fldr.glob("*"))
-
-
-
-    debug_  = True
-    gt_fn =Path(" /r/datasets/preprocessed/kits/lbd/spc_080_080_150_rlb00ec4022_rlb00ec4022_ex020/lms/kits23_00002.pt")
-    preds_fldr = Path("/s/fran_storage/predictions/kits/KITS-n7")
-
-    find_matching_fn(gt_fn, preds_fldr)
-# %%
-    gt_fns = val_fns
-    BP = BatchScorerPT(
-        gt_fns=gt_fns,
+    BP = BatchScorer2(
+        gt_fns=val_fns_kits[:15],
         preds_fldr=preds_fldr,
         imgs_fldr=None,
         partial_df=None,
@@ -1258,227 +1198,36 @@ if __name__ == "__main__":
         output_fldr=None,
         do_radiomics=False,
         dusting_threshold=1,
-        debug=False,
-        output_suffix=1
+        debug=debug_,
+        output_suffix=1,
     )
+# %%
 
     df = BP.process()
 # %%
-    S= ScorerAdvancedPT(gt_fn = gt_fn, pred_fn = pred_fn, case_id=None, ignore_labels_gt=[1], ignore_labels_pred=[1], do_radiomics=False, dusting_threshold=1)
-    S.process()
-    # gt_fns = [gt_fn]
-# # %%
-#
-#
-#         df_rad = pd.DataFrame(S.radiomics)
-#         LG_out1 = S.LG.nbrhoods.rename(
-#             mapper=lambda x: "gt_" + x if not x in ["dsc", "fk"] else x, axis=1
-#         )
-#         LG_out2 = df_rad.merge(
-#             LG_out1, right_on="gt_label_cc", left_on="label", how="outer"
-#         )
-#
-#         LP_out = S.LP.nbrhoods.rename(
-#             mapper=lambda x: "pred_" + x if x != "fk" else x, axis=1
-#         )
-# # %%
-#         if hasattr(S, "df2"):
-#             dfs_all = [LG_out2, LP_out, S.df2[["fk", "dsc"]]]
-#         else:
-#             dfs_all = [LG_out2, LP_out]
-#         df = reduce(lambda rt, lt: pd.merge(rt, lt, on="fk", how="outer"), dfs_all)
-#
-#         df["pred_fn"] = S.pred_fn
-#         df["gt_fn"] = S.gt_fn
-#         df["dsc_overall"], df["jac_overall"] = (
-#             S.dsc_overall,
-#             S.jac_overall,
-#         )
-#         df["gt_volume_total"] = S.LG.volume_total
-#         df["pred_volume_total"] = S.LP.volume_total
-#         df["case_id"] = df["case_id"].fillna(value=S.case_id)
-#
-    
+#SECTION:-------------------- TS--------------------------------------------------------------------------------------
+#SECTION:-------------------- Scorer--------------------------------------------------------------------------------------
+    debug_ = True
+    S = BP.S
+    S.LG.nbrhoods
+    print("Processing {}".format(S.case_id))
+
+    S.LG.dust(S.dusting_threshold)  # sanity check
+    S.dust()
+    S.compute_overlap_overall()
+    if S.empty_lm == "neither":
+        S.compute_overlap_perlesion()
+        S.recompute_overlap_perlesion()
+    S.insert_dsc_fks()
+    # else:
+    #     S.generate_fake_df2()
+    S.gt_radiomics(debug_)
+    df = S.create_df_full()
 # %%
-    df=    BP.process()
-# # %%
-#
-#             fn_dict = BP.file_dicts[0]
-#             gt_fn, pred_fn, img_fn = fn_dict.values()
-#             print("processing {}".format(gt_fn))
-#             BP.S = BP.scorer_cls(
-#                 gt_fn=gt_fn,
-#                 img_fn=img_fn,
-#                 pred_fn=pred_fn,
-#                 ignore_labels_gt=BP.ignore_labels_gt,
-#                 ignore_labels_pred=BP.ignore_labels_pred,
-#                 case_id=None,
-#                 save_matrices=False,
-#                 do_radiomics=BP.do_radiomics,
-#                 dusting_threshold=BP.dusting_threshold,
-#             )
-# # %%
-#     S = BP.S
-#
-#     print("Processing {}".format(S.case_id))
-#     S.dust()
-#     S.compute_overlap_overall()
-# # %%
-#     if S.empty_lm == "neither":
-#         S.compute_overlap_perlesion()
-#         S.recompute_overlap_perlesion()
-#         r =S.dsc.shape[0]
-# # %%
-#
-#         print("Processing {}".format(S.case_id))
-#         S.dust()
-#         S.compute_overlap_overall()
-#         if S.empty_lm == "neither":
-#             S.compute_overlap_perlesion()
-#             S.recompute_overlap_perlesion()
-#         else:
-#             S.generate_fake_df2()
-#         S.gt_radiomics(False)
-#
-#         df = S.create_df_full()
-# # %%
-#         df.to_csv("tmp.csv")
-# # %%
-#         gt_labs = []
-#         pred_labs = "pred_lab_" + S.LP.nbrhoods["label_cc"].astype(str)
-#         G = nx.Graph()
-#         G.add_nodes_from(gt_labs, bpartite=0)
-#         G.add_nodes_from(pred_labs, bpartite=1)
-#         edge_sets = []
-# # %%
-#         for row in range(r):
-#             if row in S.LG_ind_cc_pairing.keys():
-#                 gt_lab = "gt_lab_" + str(S.LG_ind_cc_pairing[row])
-#                 edges = np.argwhere(S.dsc[row, :]).flatten().tolist()
-#                 pred_labs = [
-#                     "pred_lab_" + str(S.LP_ind_cc_pairing[ind]) for ind in edges
-#                 ]
-#                 gt_ind_2_preds = [(gt_lab, pred_lab) for pred_lab in pred_labs]
-#                 edge_sets.extend(gt_ind_2_preds)
-#             else:
-#                 pass  # This index LG has no overlapping pred
-#         G.add_edges_from(edge_sets)
-#         con = nx.connected_components(G)
-#         ccs = list(con)
-#
-# # %%
-#         fk_gen = fk_generator(start=1)
-#         gt_remaps = {}
-#         pred_remaps = {}
-#         fks = []
-#         S.df2 = []
-#         for cc in ccs:
-#             fk = next(fk_gen)
-#             fks.append(fk)
-#             dici = {"fk": fk}
-#             gt_labels = []
-#             pred_labels = []
-#             recompute_dsc = False
-#             dsc = float("nan")
-# # %%
-#             if len(cc) > 2:
-#                 recompute_dsc = True
-#             elif len(cc) == 2:
-#                 dsc = S.dsc_from_cc_pair(cc)
-#             while cc:
-#                 label = cc.pop()
-#                 indx = re.findall(r"\d+", label)[0]
-#                 indx = int(indx)
-#                 if "gt" in label:
-#                     gt_labels.append(indx)
-#                     gt_remaps.update({indx: fk})
-#                 else:
-#                     pred_labels.append(indx)
-#                     pred_remaps.update({indx: fk})
-# # %%
-#             labels = {
-#                 "pred_label_cc": pred_labels,
-#                 "gt_label_cc": gt_labels,
-#                 "recompute_dsc": recompute_dsc,
-#                 "dsc": dsc,
-#             }
-#             dici.update(labels)
-# # %%
-# # %%
-#
-#             S.df2.append(dici)
-#         S.df2 = pd.DataFrame(S.df2)
-#         S.LG._relabel(gt_remaps)
-#         S.LP._relabel(pred_remaps)
-#
-#         redsc_labels = S.df2.loc[S.df2["recompute_dsc"] == True, "fk"].tolist()
-#         prox_labels = [[a, a] for a in redsc_labels]
-#
-#         dsc_jac_multi = S._dsc_multilabel(prox_labels)
-#
-#         S.dsc_multi = [a[0] for a in dsc_jac_multi]
-#         S.df2.loc[S.df2["fk"].isin(redsc_labels), "dsc"] = S.dsc_multi
-#
-#
-# # %%
-#     
-#     # S.gt_radiomics(debug)
-#     S.insert_dsc_fks()
-#
-#             S.gt_radiomics(debug_)
-#             df  =S.create_df_full()
-#             # df  =S.create_df_full()
-# # # %%
-#
-#     S = BP.S
-#     S.LP.nbrhoods
-#     S.LP.labels
-# # %%
-#     lms = S.LP.unique_lms[0]
-#     lms["lmap"].GetLabels()
-# # def process(S, debug=False):
-# #     print("Processing ")
-#     S.dust()
-#     S.compute_overlap_perlesion()
-#     S.LP.is_empty()
-#     S.LP.labels
-# # %%
-# #SECTION:-------------------- COMPUTE OL pER LESION--------------------------------------------------------------------------------------
-#         print("Computing label jaccard and dice scores")
-#         prox_labels, prox_inds = S.get_neighbr_labels()
-#         S.LG_ind_cc_pairing = {a[0]: b[0] for a, b in zip(prox_inds, prox_labels)}
-#         S.LP_ind_cc_pairing = {a[1]: b[1] for a, b in zip(prox_inds, prox_labels)}
-#
-#         S.dsc = np.zeros([max(1, len(S.LP)), max(1, len(S.LG))]).transpose()
-#         S.jac = np.copy(S.dsc)
-#         if S.empty_lm == "neither":
-#             args = [[S.LG.li_cc_sitk, S.LP.li_cc_sitk, *a] for a in prox_labels]
-#             d = multiprocess_multiarg(
-#                 labels_overlap, args, 16, False, False, progress_bar=True
-#             )
-#
-#             for i, sc in enumerate(d):
-#                 ind_pair = list(prox_inds[i])
-#                 S.dsc[ind_pair[0], ind_pair[1]] = sc[0]
-#                 S.jac[ind_pair[0], ind_pair[1]] = sc[1]
-#
-# # %%
-# df = S.LP.nbrhoods
-#         bboxes_lg = S.LG.nbrhoods["bbox"]
-#         bboxes_lp = S.LP.nbrhoods["bbox"]
-#         prox_inds = proximity_indices2(bboxes_lg, bboxes_lp)
-# # %%
-#
-#     S.make_one_to_one_dsc()
-#     S.compute_overlap_overall()
-#     S.cont_tables()
-#     df = S.create_df_full()
-# k# %%
-# #SECTION:-------------------- TS--------------------------------------------------------------------------------------
-#
-#     fn_dict = BP.file_dicts[0]
-#     gt_fn, pred_fn, img_fn = fn_dict.values()
-#     print("processing {}".format(gt_fn))
-#
-# # %%
-# #SECTION:-------------------- --------------------------------------------------------------------------------------            S.compute_overlap_overall()
+#SECTION:-------------------- OVERLAP OVERALL--------------------------------------------------------------------------------------
+    S.dsc_overall, S.jac_overall = labels_overlap(
+        S.LG.li_binary, S.LP.li_binary, 1, 1
+    )
+
+    get_labels(S.LG.li_binary)
+# %%

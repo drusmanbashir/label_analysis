@@ -1,12 +1,9 @@
 # %%
-import re
-from dataclasses import dataclass, field
-from pathlib import Path
-
+from dataclasses import dataclass
+from pprint import pp
 import pandas as pd
 from fran.data.dataregistry import DS
-
-
+from label_analysis.helpers import get_labels
 
 
 def remove_zero_from_list(func):
@@ -14,16 +11,19 @@ def remove_zero_from_list(func):
         output = func(*args, **kwargs)
         output = [x for x in output if x != 0]
         return output
+
     return _inner
+
+
 #
 #
 @dataclass
 class Structure:
     name: str
     label_full: int
-    label_localiser: int | list
+    label_region: int | list
     label_minimal: int | list
-    location: str
+    name_region: str
 
     def __getattribute__(self, structure: str):
         value = object.__getattribute__(self, structure)
@@ -33,51 +33,16 @@ class Structure:
 
 
 #
-#
-# class TotalSegmenterLabels():
-#     def __init__(self) -> None:
-#         meta_fn = Path("/s/datasets_bkp/totalseg/meta.xlsx")
-#         self.df= pd.read_excel(meta_fn, sheet_name="labels")
-#         self.meta =  pd.read_excel(meta_fn, sheet_name="meta")
-#
-#     def labels(self,organ="label_full",side=None):
-#         if organ=="label_full":
-#             return self.df.label.to_list()
-#         if side:
-#             labs = self.df.loc[(self.df['structure_short']==organ) & (self.df['side']==side)]
-#         else:
-#             labs = self.df.loc[(self.df['structure_short']==organ) ]
-#         labs_out = labs['label'].to_list()
-#         return labs_out
-#
-#     def create_remapping(self,labelsets,labels_out):
-#         '''
-#         only labels in the list are kept label_full others are mapped to zero
-#
-#         '''
-#         assert len(labelsets)==len(labels_out), "Make sure the labelsets and labels_out have the same length"
-#         remapping  = {l:0 for l in self.label_full}
-#         for lset,lout in zip(labelsets,labels_out):
-#             for l in lset:
-#                 remapping[l]=lout
-#         return remapping
-#
-#     @property
-#     def label_full(self):return self.df.label.to_list()
-#
-#     @property
-#     def labelshort(self):return self.df.label_short.to_list()
-#
 class TotalSegmenterLabels:
     """
     Class for managing and processing labels from the TotalSegmenter dataset.
     This class provides functionality for retrieving and remapping labels
     stored in an Excel file, specificlabel_fully intended for medical imaging tasks.
-    df columns: structure,structure_short, label,  label_short, location_localiser, location, side
+    df columns: structure,, label,  label_short, name_region, name_region, side
       structure is vanilla names.
-      structure_short is same but without side so both adrenals get the same label.
-      location is general idea as in chest, abdo, label_full body (erector spinae)
-      location_localiser/label_localiser: gives location descriptions which may be used in creawting a low-res localiser image. e.g., label_full vessels are same label
+       is same but without side so both adrenals get the same label.
+      name_region is general idea as in chest, abdo, label_full body (erector spinae)
+      name_region/label_region: gives name_region descriptions which may be used in creawting a low-res localiser image. e.g., label_full vessels are same label
     """
 
     def __init__(self) -> None:
@@ -86,10 +51,9 @@ class TotalSegmenterLabels:
         Loads label information into dataframes
         """
         totalseg_folder = DS["totalseg_meta"].folder
-        meta_fn = totalseg_folder / "meta_codex.xlsx"
+        meta_fn = totalseg_folder / "meta_codex_v2.xlsx"
         self.df = pd.read_excel(meta_fn, sheet_name="labels")
         self.meta = pd.read_excel(meta_fn, sheet_name="meta")
-
 
     @remove_zero_from_list
     def get_labels(self, organ="label_full", side=None, localiser=False):
@@ -112,36 +76,36 @@ class TotalSegmenterLabels:
             return self.df.label.to_list()
         if side:
             labs = self.df.loc[
-                (self.df["structure_short"] == organ) & (self.df["side"] == side)
+                (self.df[""] == organ) & (self.df["side"] == side)
             ]
         else:
-            labs = self.df.loc[(self.df["structure_short"] == organ)]
+            labs = self.df.loc[(self.df[""] == organ)]
         if localiser == False:
             labs_out = labs["label_full"].to_list()
         else:
-            labs_out = labs["label_localiser"].to_list()
+            labs_out = labs["label_region"].to_list()
         return labs_out
 
     @remove_zero_from_list
     def get_label_by_name(self, name: str, group: str):
         """
-        Return unique numeric `label_localiser` values for rows whose
-        `structure_short` matches the provided word.
+        Return unique numeric `label_region` values for rows whose
+        `` matches the provided word.
 
         Parameters
         ----------
         word : str
-            Search token for `structure_short`.
+            Search token for ``.
         """
         if not isinstance(name, str) or not name.strip():
             raise ValueError("word must be a non-empty string")
 
-        structures = self.df["structure_short"].fillna("").astype(str)
+        structures = self.df[""].fillna("").astype(str)
         token = name.strip()
         mask = structures.str.lower() == token.lower()
 
         labels = (
-            self.df.loc[mask, "label_localiser"].dropna().astype(int).unique().tolist()
+            self.df.loc[mask, "label_region"].dropna().astype(int).unique().tolist()
         )
         return labels
 
@@ -155,13 +119,13 @@ class TotalSegmenterLabels:
         assert as_list or as_dict, "Either list mode or dict mode should be true"
         if src_labels in [
             "label_full",
-            "label_localiser",
+            "label_region",
             "label_minimal",
-        ] and dest_labels in ["label_full", "label_localiser", "label_minimal"]:
+        ] and dest_labels in ["label_full", "label_region", "label_minimal"]:
             src_labels = getattr(self, src_labels)
             dest_labels = getattr(self, dest_labels)
             # pairs = set(zip(src_labels,dest_labels))
-        elif src_labels in ["label_localiser", "label_full", "label_minimal"]:
+        elif src_labels in ["label_region", "label_full", "label_minimal"]:
             dest_struc = dest_labels
             STU = getattr(self, dest_struc)
             maps_from = getattr(STU, src_labels)
@@ -209,8 +173,8 @@ class TotalSegmenterLabels:
     #     return self.df.label_short.to_list()
     @property
     @remove_zero_from_list
-    def label_localiser(self):
-        return self.df.label_localiser.to_list()
+    def label_region(self):
+        return self.df.label_region.to_list()
 
     @property
     @remove_zero_from_list
@@ -220,35 +184,29 @@ class TotalSegmenterLabels:
     def __getattr__(self, structure: str):
         """
         Dynamic access:
-        - `self.<structure_word>` -> unique localiser labels for matching structure_short
+        - `self.<structure_word>` -> unique localiser labels for matching 
         """
 
         df = self.df
-
-        for str_cols in [
-            "structure_short",
-            "structure",
-            "location_localiser",
-            "location",
-        ]:
+        for str_cols in ["name_full","structure","name_region","name_minimal"]:
             rows = df.loc[df[str_cols] == structure]
             if len(rows) > 0:
-                label_loc = rows.label_localiser.unique().tolist()
+                label_loc = rows.label_region.unique().tolist()
                 label = rows.label_full.unique().tolist()
                 label_min = rows.label_minimal.unique().tolist()
-                location = rows.location.unique().tolist()
+                name_region = rows.name_region.unique().tolist()
                 SN = Structure(
                     name=structure,
                     label_full=label,
-                    label_localiser=label_loc,
+                    label_region=label_loc,
                     label_minimal=label_min,
-                    location=location,
+                    name_region=name_region,
                 )
                 return SN
 
         print(f"Structure {structure} not found")
         raise AttributeError(
-            f"TSL attribs can be either df column names or entries of structure_short or structure. Full list of structure shorts: {df['structure_short'].unique().tolist()}\n Full list of structures: {df['structure'].unique().tolist()}"
+            f"TSL attribs can be either df column names or entries of  or structure. Full list of structure shorts: {df['name_full'].unique().tolist()}\n Full list of structures: {df['structure'].unique().tolist()}"
         )
         # labels = self.get_label_by_name(name, group)
         # if labels:
@@ -260,16 +218,23 @@ class TotalSegmenterLabels:
 # %%
 
 if __name__ == "__main__":
+    import re
+    from pathlib import Path
+
+    import SimpleITK as sitk
     from fran.managers.project import Project
 
     P = Project("totalseg")
     TSL = TotalSegmenterLabels()
     TSL.pancreas
     rem = TSL.create_remapping("label_full", "label_minimal", as_dict=True)
-    TSL.create_remapping("label_localiser", "gu", as_dict=True)
+    TSL.create_remapping("label_region", "bladder_prostate", as_dict=True)
     TSL.create_remapping("label_minimal", "pancreas", as_dict=True)
 
-# %%
+    TSL.lung
+    TSL.misc
+    pp(TSL.abdomen)
+# %
     fn1 = "/s/fran_storage/predictions/totalseg/LITS-827/lidc2_0001.nii.gz"
     fn2 = "/s/xnat_shadow/lidc2/masks/lidc2_0001.nii.gz"
     lm1 = sitk.ReadImage(fn1)
@@ -277,9 +242,16 @@ if __name__ == "__main__":
     l2 = get_labels(lm2)
 
 # %%
-    mask = TSL.df["structure_short"].where("lungs", 0)
+    mask = TSL.df[""].where("lungs", 0)
 # %%
+    df = TSL.df
+    structure = 'gu'
+    for str_cols in ["name_full","structure","name_region","name_minimal"]:
+        rows = df.loc[df[str_cols] == structure]
+# %%
+
 # SECTION:-------------------- CREATING simple labelset-------------------------------------------------------------------------------------- <CR>
+# %%
 
     df = TSL.df
 
@@ -291,14 +263,14 @@ if __name__ == "__main__":
     TSL.create_remapping(TSL.label_full, TSL.lung, as_dict=True)
 
     # %r
-    src_labels = TSL.label_localiser
+    src_labels = TSL.label_region
     src_labels = ""
     dest_struc = "lung"
     dest_struc = getattr(TSL, dest_struc)
     getattr(dest_struc, src_labels)
-    dest_struc = dest_struc.label_localiser
+    dest_struc = dest_struc.label_region
 
-    neo = TSL.df["label_localiser"].where(TSL.df["label_localiser"].isin(dest_struc), 0)
+    neo = TSL.df["label_region"].where(TSL.df["label_region"].isin(dest_struc), 0)
     src_labels = getattr(TSL, src_labels)
     src_labels = src_labels.tolist()
 # %%
@@ -312,23 +284,23 @@ if __name__ == "__main__":
     df.to_csv(df_n)
 # %%
     as_dict = True
-    src_labels = "label_localiser"
+    src_labels = "label_region"
     dest_struc = "lung"
 
     assert as_list or as_dict, "Either list mode or dict mode should be true"
-    if src_labels in ["label_full", "label_localiser"] and dest_struc in [
+    if src_labels in ["label_full", "label_region"] and dest_struc in [
         "all",
-        "label_localiser",
+        "label_region",
     ]:
         src_labels = getattr(TSL, src_labels)
         dest_struc = getattr(TSL, dest_struc)
-    elif src_labels == "label_localiser":
+    elif src_labels == "label_region":
         dest_struc = getattr(TSL, dest_struc)
-        neo = TSL.df["label_localiser"].where(
-            TSL.df["label_localiser"].isin(dest_struc), 0
+        neo = TSL.df["label_region"].where(
+            TSL.df["label_region"].isin(dest_struc), 0
         )
         dest_struc = neo.tolist()
-        src_labels = TSL.df["label_localiser"]
+        src_labels = TSL.df["label_region"]
     # if src_labels == dest_labels:
     #     return None
     if as_dict == True:
@@ -340,7 +312,7 @@ if __name__ == "__main__":
 # SECTION:-------------------- CREATING label_short------------------------------------------------------------------------------------- <CR>
     key = fk_generator(1)
     df = pd.read_csv(df_n)
-    short = df.structure_short
+    short = df.name_full
 # %%
     dones = {}
     for structure in short:
@@ -375,21 +347,21 @@ if __name__ == "__main__":
 # %%
     structure = "lung"
     df = TSL.df
-    df[df["structure_short"] == structure]
+    df[df[""] == structure]
     df[df["structure"] == structure]
 
-    rows = df.loc[df["structure_short"] == structure]
-    label_loc = rows.label_localiser.unique().tolist()
+    rows = df.loc[df[""] == structure]
+    label_loc = rows.label_region.unique().tolist()
     label = rows.label.unique().tolist()
     label_min = rows.label_minimal.unique().tolist()
-    location = rows.location.unique().tolist()
+    name_region = rows.name_region.unique().tolist()
 
     SN = Structure(
         name=structure,
         label=label,
-        label_localiser=label_loc,
+        label_region=label_loc,
         label_minimal=label_min,
-        location=location,
+        name_region=name_region,
     )
 # %%
 
@@ -414,14 +386,14 @@ if __name__ == "__main__":
 
         return _inner
 
-    
 # %%
     @nozero
     def listi():
-        return [0,1, 2, 3]
-    
+        return [0, 1, 2, 3]
 
     listi()
 # %%
 
 # %%
+
+

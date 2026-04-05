@@ -7,10 +7,10 @@ from label_analysis import TotalSegmenterLabels  # Replace 'your_module' with th
 # Sample DataFrames for mocking
 mock_labels_df = pd.DataFrame({
     'structure': ['adrenal_gland_left', 'adrenal_gland_right', 'spinal_cord', 'clavicula_left', 'clavicula_right'],
-    'structure_short': ['adrenal_gland', 'adrenal_gland', 'spinal_cord', 'shoulder', 'shoulder'],
+    'name_full': ['adrenal_gland', 'adrenal_gland', 'spinal_cord', 'shoulder', 'shoulder'],
     'label': [1, 2, 83, 9, 10],
     'label_short': [1, 1, 2, 3, 3],
-    'location_localiser': ['background', 'background', 'background', 'bone', 'bone'],
+    'name_region': ['background', 'background', 'background', 'bone', 'bone'],
     'location': ['abdomen', 'abdomen', 'neck,chest,abdomen,pelvis', 'chest', 'chest'],
     'side': ['left', 'right', None, 'left', 'right']
 })
@@ -61,10 +61,10 @@ def test_label_short_property(totalsegmenterlabels):
     label_short = tsl.label_short
     assert label_short == [1, 1, 2, 3, 3], "The 'label_short' property does not match expected values"
 
-def test_label_localiser_property(totalsegmenterlabels):
+def test_label_region_property(totalsegmenterlabels):
     tsl = totalsegmenterlabels
-    label_localiser = tsl.label_localiser
-    assert label_localiser == ['background', 'background', 'background', 'bone', 'bone'], "The 'label_localiser' property does not match expected values"
+    label_region = tsl.label_region
+    assert label_region == ['background', 'background', 'background', 'bone', 'bone'], "The 'label_region' property does not match expected values"
 
 @pytest.mark.parametrize("labelsets, labels_out", [
     ([[1, 2], [83]], [10, 20]),

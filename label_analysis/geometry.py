@@ -74,18 +74,15 @@ class LabelMapGeometry(GetAttr):
             li = relabel(li, remove_labels)
         self.img = img
         self.li_org = li
-        self.create_li_binary()
+        self.create_li_binary(li)
         self.create_li_cc()  # creates ordered labelmap from original labels and a key mapping
         self.execute_filter()
         self.calc_geom()
 
-    # def calc_bb(self):
-    #     self.fil.ComputteBounndin
 
-    def create_li_binary(self):
-        lm_tmp = self.li_org
-        lm_tmp = single_label(lm_tmp, 1)
-        self.li_binary = lm_tmp
+    def create_li_binary(self, li):
+        binary = sitk.Cast(li> 0, sitk.sitkUInt8)
+        self.li_binary = binary
 
     def create_li_cc(self):
         lms = []
@@ -157,7 +154,8 @@ class LabelMapGeometry(GetAttr):
         labels = listify(labels)
         remapping = {x: 0 for x in labels}
         print("Removing labels {0}".format(labels))
-        self._relabel(remapping)
+        self._relabel_li_cc(remapping)
+        self.create_li_binary(self.li_cc)
         self.nbrhoods = self.nbrhoods[~self.nbrhoods["label_cc"].isin(labels)]
         self.nbrhoods.reset_index(inplace=True, drop=True)
         for l in labels:
@@ -171,7 +169,7 @@ class LabelMapGeometry(GetAttr):
         self.li_cc = to_int(self.li_cc)
         self.fil.Execute(self.li_cc)
 
-    def _relabel(self, remapping, verbose=True):
+    def _relabel_li_cc(self, remapping, verbose=True):
         self.li_cc  = relabel(self.li_cc, remapping)
         if verbose==True:
             logging.warning(
@@ -252,10 +250,30 @@ if __name__ == "__main__":
     lms=sorted(lms_fldr.glob("*.pt"))
     preds = sorted(pred_fldr.glob("*.pt"))
 
-    L = LabelMapGeometry(preds[0])
 
+    gt_fn = Path('/media/UB/datasets/kits23/lms/kits23_00121.nii.gz')
+    pred_fn = Path('/s/fran_storage/predictions/kits2/KITS2-bah/kits23_00121.nii.gz')
+    L = LabelMapGeometry(gt_fn, ignore_labels = [1])
+    get_labels(L.li_binary)
+    L.dust(1)
+
+# %%
     L.nbrhoods.bbox
     L.nbrhoods
+    li = L.li_org
+
+    get_labels(li)
+    binary = sitk.Equal(li, 1)
+
+# %%
+    binary = sitk.BinaryThreshold(
+        li,
+        lowerThreshold=1,
+        upperThreshold=1e2,
+        insideValue=1,
+        outsideValue=0
+    )
+    print(get_labels(binary))
 # %%
 
 

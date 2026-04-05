@@ -17,6 +17,9 @@ from tqdm import tqdm
 from utilz.cprint import cprint
 from utilz.fileio import maybe_makedirs
 from utilz.helpers import set_autoreload
+
+set_autoreload()
+
 from utilz.imageviewers import ImageMaskViewer
 from utilz.itk_sitk import (
     ConvertItkImageToSimpleItkImage,
@@ -229,6 +232,16 @@ class LabelMapGeometryITK(LabelMapGeometry):
             inds=[label_obj.ind for label_obj in label_objs],
         )
 
+
+    def remap_li_cc(self, remapping):
+        F = itk.ChangeLabelImageFilter[self.li_cc,self.li_cc].New(self.li_cc)
+        for old, new in remapping.items():
+            F.SetChange(old, new)
+        F.Update()
+        li_cc_new = F.GetOutput()
+        return li_cc_new
+
+
     def calc_geom(self):
         columns = [
             "label_org",
@@ -300,7 +313,7 @@ class LabelMapGeometryITK(LabelMapGeometry):
         self.nbrhoods["label_org"] = self.nbrhoods["label_org"].astype("Int64")
 
 
-    def _relabel(self, remapping, verbose=True):
+    def _relabel_li_cc(self, remapping, verbose=True):
         li_cc_sitk = ConvertItkImageToSimpleItkImage(self.li_cc, sitk.sitkUInt8)
         li_cc_sitk = relabel(li_cc_sitk, remapping)
         self.li_cc = ConvertSimpleItkImageToItkImage(li_cc_sitk, itk.US)
@@ -324,7 +337,7 @@ class LabelMapGeometryITK(LabelMapGeometry):
         labels = listify(labels)
         remapping = {x: 0 for x in labels}
         print("Removing labels {0}".format(labels))
-        self._relabel(remapping)
+        self._relabel_li_cc(remapping)
         self.nbrhoods = self.nbrhoods[~self.nbrhoods["label_cc"].isin(labels)]
         self.nbrhoods.reset_index(inplace=True, drop=True)
         for l in labels:
@@ -468,8 +481,6 @@ class BBoxInfoFromITK(LabelMapGeometryITK):
 # SECTION:-------------------- setup-------------------------------------------------------------------------------------- <CR>
 if __name__ == "__main__":
 # %%
-    
-    set_autoreload()
     fns = [
         "/s/fran_storage/predictions/nodes/LITS-1405_LITS-1416_LITS-1417/nodes_140_Ta70413_ABDOMEN_2p00.nii.gz",
         "/s/fran_storage/predictions/nodes/LITS-1405_LITS-1416_LITS-1417/nodes_n1_Ta80605_CAP1p5mm.nii.gz",
@@ -482,11 +493,16 @@ if __name__ == "__main__":
 
     org_fn = outfldr / ("org.nii.gz")
     sitk_fn = outfldr / ("kits23_00568_sitk.nii.gz")
+    gt_fn = Path('/media/UB/datasets/kits23/lms/kits23_00121.nii.gz')
+    pred_fn = Path('/s/fran_storage/predictions/kits2/KITS2-bah/kits23_00121.nii.gz')
 # %%
-    L = LabelMapGeometryITK(gt_fn, ignore_labels=[1], compute_feret=False)
+    L = LabelMapGeometryITK(pred_fn, ignore_labels=[1], compute_feret=False)
     L.nbrhoods
     L.unique_lms
     L.dust(1)
+    L.li_cc
+    L.li_binary
+    get_labels_itk(L.li_binary)
 # %%
 # %%
 
@@ -500,55 +516,10 @@ if __name__ == "__main__":
 
 
 # %%
-   for i in range(n_label_objects):
+    for i in range(n_label_objects):
         lo =l2.GetNthLabelObject(i) 
         print(lo.GetLabel())
     # lo.SetLabel(11)
-# %%
-    label_org = lm['label_org']
-    M = LabelObj(0,lo,l2,label_org)
-
-    lo.GetLabel()
-    M.relabel(M.label_org)
-    M.obj.GetLabel()
-
-    lo.SetLabel(3)
-
-
-# %%
-
-    l2.GetLargestPossibleRegion().GetSize()
-    img = itk.label_map_to_label_image_filter(l2)
-    arr = itk.GetArrayFromImage(img)
-    arr = torch.tensor(arr)
-    print(arr.unique())
-# %%
-
-# %%
-    itk.imwrite(L2.li_cc, sitk_fn)
-    L2.nbrhoods
-    lm = L2.unique_lms[0]
-    ind = inds_small[0]
-    L2.dust(1)
-    rows = L.nbrhoods.iloc[inds_small]
-    label_org = row["label_org"]
-    label_cc = row["label_cc"]
-
-    L.unique_lms
-
-# %%
-    label_org = row["label_org"]
-    lobj_ind = L._get_unique_lms_index(label_org)
-    label_cc = int(row["label_cc"])
-    lmap = L.unique_lms[lobj_ind]["lmap"]
-    lmap.RemoveLabel(label_cc)
-    dici = {
-        "lmap": lmap,
-        "label_org": label_org,
-        "n_islands": lmap.GetNumberOfLabelObjects(),
-    }
-    L.unique_lms[lobj_ind] = dici
-
 # %%
 # %%
     itk.imwrite(L.li_org, org_fn)
