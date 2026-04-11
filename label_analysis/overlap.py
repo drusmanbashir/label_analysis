@@ -1136,6 +1136,7 @@ class BatchScorerPT(BatchScorerITK):
     scorer_cls = ScorerAdvancedPT
 
 
+# %%
 if __name__ == "__main__":
 # %%
 # SECTION:-------------------- SETUP-------------------------------------------------------------------------------------- <CR> <CR> <CR>

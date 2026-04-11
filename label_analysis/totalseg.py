@@ -115,39 +115,42 @@ class TotalSegmenterLabels:
         dest_labels: str | list,
         as_dict=False,
         as_list=False,
-    ):
+    ) -> dict | list:
+
         assert as_list or as_dict, "Either list mode or dict mode should be true"
-        if src_labels in [
-            "label_full",
-            "label_region",
-            "label_minimal",
-        ] and dest_labels in ["label_full", "label_region", "label_minimal"]:
+        label_cols = ["label_full", "label_region", "label_minimal"]
+        if isinstance(src_labels, list) and isinstance(dest_labels, list):
+            pass
+        elif (
+            isinstance(src_labels, str)
+            and isinstance(dest_labels, str)
+            and src_labels in label_cols
+            and dest_labels in label_cols
+        ):
             src_labels = getattr(self, src_labels)
             dest_labels = getattr(self, dest_labels)
             # pairs = set(zip(src_labels,dest_labels))
-        elif src_labels in ["label_region", "label_full", "label_minimal"]:
+        elif (
+            isinstance(src_labels, str)
+            and isinstance(dest_labels, str)
+            and src_labels in label_cols
+        ):
             dest_struc = dest_labels
             STU = getattr(self, dest_struc)
             maps_from = getattr(STU, src_labels)
             neo = self.df[src_labels].where(self.df[src_labels].isin(maps_from), 0)
             dest_labels = neo.tolist()
-            src_labels = self.df[src_labels]
-            src_labels = src_labels.tolist()
+            src_labels = self.df[src_labels].tolist()
             # pairs = set(zip(src_labels,dest_struc))
         else:
             raise NotImplementedError
 
         pairs = set(zip(src_labels, dest_labels))
-
-        # else:
-        #     pairs = set(zip(src_labels,dest_labels))
-        # if src_labels == dest_labels:
-        #     return None
-        if as_dict == True:
+        if as_dict:
             # remapping = {s: d for s, d in zip(src_labels, dest_labels)}
             remapping = {s: d for s, d in pairs}
             return remapping
-        elif as_list == True:
+        elif as_list:
             srcs = [a[0] for a in pairs]
             dests = [a[1] for a in pairs]
             return [srcs, dests]
@@ -228,6 +231,7 @@ if __name__ == "__main__":
     TSL = TotalSegmenterLabels()
     TSL.pancreas
     rem = TSL.create_remapping("label_full", "label_minimal", as_dict=True)
+    rem = TSL.create_remapping("label_full", "abdomen", as_dict=True)
     TSL.create_remapping("label_region", "bladder_prostate", as_dict=True)
     TSL.create_remapping("label_minimal", "pancreas", as_dict=True)
 
@@ -395,5 +399,4 @@ if __name__ == "__main__":
 # %%
 
 # %%
-
 
