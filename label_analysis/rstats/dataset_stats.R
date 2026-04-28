@@ -21,7 +21,9 @@ library('tidyverse')
 # %%
 redundant  <- c("lm_filename","minor_axis", "least_axis","processing_error","error_type", "error_message", "label")
 folder <-"/s/fran_storage/predictions/kits2/KITS2-bk/results"
+folder <-"/s/fran_storage/predictions/kits23/KITS23-SIRIG/results_fold1"
 dfs_n<-file.path(folder,"results_thresh1mm_all.xlsx")
+dfs_n<-file.path(folder,"results_fold1_thresh1mm_results1.xlsx")
 df2_fn = "/r/datasets/preprocessed/test/fixed_spacing/spc_080_080_150_rsc5609df8a/dataset_stats/lesion_stats2.csv"
 
 df_fn = "/r/datasets/preprocessed/test/fixed_spacing/spc_080_080_150_rsc5609df8a/dataset_stats/lesion_stats.csv"

@@ -1,34 +1,21 @@
 # %%
 import logging
-import os
 import sys
-import time
-from functools import reduce
-
-from utilz.cprint import cprint
-
-from label_analysis.geometry import LabelMapGeometry
-from label_analysis.geometry_itk import LabelMapGeometryITK
-from label_analysis.helpers import remap_single_label
-from label_analysis.overlap import BatchScorer2, chunks
-from label_analysis.radiomics_setup import *
-
-sys.path += ["/home/ub/code"]
-import itertools as il
 from pathlib import Path
 
-import numpy as np
+import itk
 import pandas as pd
 import ray
 import SimpleITK as sitk
-from fastcore.basics import GetAttr
+from label_analysis.geometry import LabelMapGeometry
+from label_analysis.geometry_itk import LabelMapGeometryITK
+from label_analysis.helpers import *
+from label_analysis.overlap import BatchScorerWorkerITK, BatchScorerWorkerPT
+from label_analysis.radiomics_setup import *
+from utilz.cprint import cprint
 from utilz.helpers import *
 
-from label_analysis.helpers import *
-
-import itk
 itk.MultiThreaderBase.SetGlobalDefaultNumberOfThreads(8)
-
 
 
 def _concat_valid_frames(frames):
@@ -100,8 +87,9 @@ def _process_labelmap_batch_itk(
             img = None
         try:
             L = LabelMapGeometryITK(li=gt_fn, ignore_labels=ignore_labels, img=img)
-            if do_radiomics is True and L.is_empty() is False:
+            if L.is_empty() is False:
                 L.dust(dusting_threshold=dusting_threshold)
+            if do_radiomics is True and L.is_empty() is False:
                 L.radiomics(params_fn)
             L.nbrhoods["lm_filename"] = gt_fn
             L.nbrhoods["processing_error"] = False
@@ -128,7 +116,7 @@ class LabelMapGeometryRay:
         do_radiomics=True,
         params_fn=None,
     ):
-        nbrhoods= []
+        nbrhoods = []
         if ignore_labels is None:
             ignore_labels = []
         if isinstance(gt_fns, (str, Path)):
@@ -144,18 +132,24 @@ class LabelMapGeometryRay:
         elif not isinstance(img_fns, list):
             img_fns = list(img_fns)
         if len(img_fns) == 0 and do_radiomics:
-            cprint("Warning: no img_files given. Radiomics will not be computed",color="red", bold=True)
-            do_radiomics=False
+            cprint(
+                "Warning: no img_files given. Radiomics will not be computed",
+                color="red",
+                bold=True,
+            )
+            do_radiomics = False
         for gt_fn in gt_fns:
             try:
-                if len(img_fns)>0:
-                    img_fn = find_matching_fn(gt_fn, img_fns,tags=['case_id'],allow_multiple_matches=False)
+                if len(img_fns) > 0:
+                    img_fn = find_matching_fn(
+                        gt_fn, img_fns, tags=["case_id"], allow_multiple_matches=False
+                    )
                     img = sitk.ReadImage(img_fn)
                 else:
-                    img=None
-                L = LabelMapGeometry(lm=gt_fn, ignore_labels=ignore_labels, img=img)
-                if do_radiomics==True and L.is_empty()==False:
-                    L.dust(dusting_threshold=dusting_threshold  )
+                    img = None
+                L = LabelMapGeometry(li=gt_fn, ignore_labels=ignore_labels, img=img)
+                if do_radiomics == True and L.is_empty() == False:
+                    L.dust(dusting_threshold=dusting_threshold)
                     L.radiomics(params_fn)
                 L.nbrhoods["lm_filename"] = gt_fn
                 L.nbrhoods["processing_error"] = False
@@ -192,15 +186,16 @@ class LabelMapGeometryRayITK:
             params_fn=params_fn,
         )
 
+
 @ray.remote(num_cpus=4)
-class BatchScorerRay:
+class BatchScorerWorkerRay:
     def __init__(self, actor_id):
         self.actor_id = actor_id
 
     def process(
         self,
         gt_fns: Union[Path, list],
-        preds_fldr: Path,
+        preds_fldr: Path | list[Path],
         ignore_labels_gt: list,
         ignore_labels_pred: list,
         imgs_fldr: Path = None,
@@ -210,9 +205,10 @@ class BatchScorerRay:
         do_radiomics=False,
         dusting_threshold=1,
         debug=False,
+        batch_scorer_cls=BatchScorerWorkerITK,
     ):
         print("process {} ".format(self.actor_id))
-        self.B = BatchScorer2(
+        self.B = batch_scorer_cls(
             output_suffix=self.actor_id,
             gt_fns=gt_fns,
             preds_fldr=preds_fldr,
@@ -227,100 +223,307 @@ class BatchScorerRay:
         )
         return self.B.process()
 
-# %%
-#SECTION:-------------------- SETUP--------------------------------------------------------------------------------------
-if __name__ == "__main__":
-# %%
 
-    from fran.managers.project import DS
-    preds_fldr = Path(
-        "/s/fran_storage/predictions/litsmc/LITS-940_fixed_mc"
-    )
-    test_lms_fldr = Path("/s/xnat_shadow/crc/lms")
-    train_lms_fldrs= [Path(fldr)/("lms") for fldr in train_fldrs]
-    train_img_fldrs = [Path(fldr)/("images") for fldr in train_fldrs]
-    train_img_fns =[list(fldr.glob("*")) for fldr in train_img_fldrs]
-    train_img_fns = list(il.chain.from_iterable(train_img_fns))
-    train_li_fns = [list(fldr.glob("*")) for fldr in train_lms_fldrs]
-    train_li_fns = list(il.chain.from_iterable(train_li_fns))
+class BatchScorerRayITK:
+    batch_scorer_cls = BatchScorerWorkerITK
 
-    test_imgs_fldr = Path("/s/xnat_shadow/crc/images")
-    pred_fns = list(preds_fldr.glob("*"))
-    test_li_fns =  list(test_lms_fldr.glob("*"))
-    test_img_fns =  list(test_imgs_fldr.glob("*"))
+    def __init__(
+        self,
+        gt_fns: list[Path],
+        preds_fldr: Path | list[Path],
+        ignore_labels_gt: list,
+        ignore_labels_pred: list,
+        output_fldr: Path | None = None,
+        imgs_fldr: Path | None = None,
+        partial_df: pd.DataFrame | None = None,
+        exclude_fns: list | None = None,
+        do_radiomics: bool = False,
+        dusting_threshold: int = 1,
+        debug: bool = False,
+        n_actors: int = 8,
+    ):
+        if not gt_fns:
+            raise ValueError("gt_fns is empty")
+        if isinstance(preds_fldr, Path):
+            if not preds_fldr.exists():
+                raise FileNotFoundError(
+                    f"Predictions folder does not exist: {preds_fldr}"
+                )
+            preds_root = preds_fldr
+        else:
+            if not preds_fldr:
+                raise ValueError("preds_fldr is empty")
+            preds_root = preds_fldr[0].parent
+        if output_fldr is None:
+            output_fldr = preds_root / "results"
+        if exclude_fns is None:
+            exclude_fns = []
 
-    lms_pt_fldr = Path("/r/datasets/preprocessed/lidc/lbd/spc_075_075_075_rlb109adb5e_rlb109adb5e_ex000/lms")
-    lms_pt = list(lms_pt_fldr.glob("*"))
-    li_fn = lms_pt[0]
+        output_fldr.mkdir(parents=True, exist_ok=True)
 
-    lm = torch.load(li_fn,weights_only=False)
-    lm.meta
-# %%
-    DS.lidc
-    lms_lidc = DS.lidc.folder/("lms")
-    fns_lidc = list(lms_lidc.glob("*"))
-# %%
-#SECTION:-------------------- Multiprocess Training data NO RADIOMICS--------------------------------------------------------------------------------------
-    
-    fns_pt = ["/media/UB/datasets/kits23/lms/kits23_00018.nii.gz"]
-    fldr_pt = Path("/r/datasets/preprocessed/lidc/lbd/spc_075_075_075_rlb109adb5e_rlb109adb5e_ex000/lms")
-    fns_pt = list(fldr_pt.glob("*"))
+        self.gt_fns = gt_fns
+        self.preds_fldr = preds_fldr
+        self.ignore_labels_gt = ignore_labels_gt
+        self.ignore_labels_pred = ignore_labels_pred
+        self.output_fldr = output_fldr
+        self.imgs_fldr = imgs_fldr
+        self.partial_df = partial_df
+        self.exclude_fns = exclude_fns
+        self.do_radiomics = do_radiomics
+        self.dusting_threshold = dusting_threshold
+        self.debug = debug
+        self.n_actors = min(len(gt_fns), n_actors)
+        self.gt_fns_chunks = [gt_fns[i :: self.n_actors] for i in range(self.n_actors)]
+        self.actors = [
+            BatchScorerWorkerRay.remote(actor_id) for actor_id in range(self.n_actors)
+        ]
 
+    def process(self):
+        futures = []
+        for actor, gt_fns_chunk in zip(self.actors, self.gt_fns_chunks):
+            futures.append(
+                actor.process.remote(
+                    gt_fns=gt_fns_chunk,
+                    preds_fldr=self.preds_fldr,
+                    ignore_labels_gt=self.ignore_labels_gt,
+                    ignore_labels_pred=self.ignore_labels_pred,
+                    imgs_fldr=self.imgs_fldr,
+                    partial_df=self.partial_df,
+                    exclude_fns=self.exclude_fns,
+                    output_fldr=self.output_fldr,
+                    do_radiomics=self.do_radiomics,
+                    dusting_threshold=self.dusting_threshold,
+                    debug=self.debug,
+                    batch_scorer_cls=self.batch_scorer_cls,
+                )
+            )
 
-    n_actors = 1
-    fns_chunks = list(chunks(fns_pt, n_actors))
-    actors = [LabelMapGeometryRay.remote() for _ in range(n_actors)]
-
-# %%
-    ignore_labels = [1]
-    do_radiomics = False
-    params_fn = None
-    dusting_threshold = 1
-
-# %%
-    futures = []
-    for actor, fns_chunk in zip(actors, fns_chunks):
-        res = actor.process.remote(
-            fns_chunk,
-            ignore_labels,
-            dusting_threshold,
-            img_fns=None,
-            do_radiomics=do_radiomics,
-            params_fn=params_fn,
+        results = ray.get(futures)
+        df = pd.concat(results, ignore_index=True)
+        output_fn = (
+            self.output_fldr
+            / f"{self.output_fldr.name}_thresh{self.dusting_threshold}mm_all.xlsx"
         )
-        futures.append(res)
+        df.to_excel(output_fn, index=False)
+        print(f"Saved merged results to {output_fn}")
+        return df
 
-    parts = ray.get(futures)
+
+class BatchScorerRayPT(BatchScorerRayITK):
+    batch_scorer_cls = BatchScorerWorkerPT
+
+
+def _score_preds_folder(
+    gt_fns: list[Path],
+    preds_fldr: Path | list[Path],
+    ignore_labels_gt: list,
+    ignore_labels_pred: list,
+    output_fldr: Path | None = None,
+    imgs_fldr: Path | None = None,
+    partial_df: pd.DataFrame | None = None,
+    exclude_fns: list | None = None,
+    do_radiomics: bool = False,
+    dusting_threshold: int = 1,
+    debug: bool = False,
+    n_actors: int = 8,
+    scorer_ray_cls=BatchScorerRayITK,
+):
+    scorer = scorer_ray_cls(
+        gt_fns=gt_fns,
+        preds_fldr=preds_fldr,
+        ignore_labels_gt=ignore_labels_gt,
+        ignore_labels_pred=ignore_labels_pred,
+        output_fldr=output_fldr,
+        imgs_fldr=imgs_fldr,
+        partial_df=partial_df,
+        exclude_fns=exclude_fns,
+        do_radiomics=do_radiomics,
+        dusting_threshold=dusting_threshold,
+        debug=debug,
+        n_actors=n_actors,
+    )
+    return scorer.process()
+
+
+def score_preds_folder_itk(
+    gt_fns: list[Path],
+    preds_fldr: Path | list[Path],
+    ignore_labels_gt: list,
+    ignore_labels_pred: list,
+    output_fldr: Path | None = None,
+    imgs_fldr: Path | None = None,
+    partial_df: pd.DataFrame | None = None,
+    exclude_fns: list | None = None,
+    do_radiomics: bool = False,
+    dusting_threshold: int = 1,
+    debug: bool = False,
+    n_actors: int = 8,
+):
+    return _score_preds_folder(
+        gt_fns=gt_fns,
+        preds_fldr=preds_fldr,
+        ignore_labels_gt=ignore_labels_gt,
+        ignore_labels_pred=ignore_labels_pred,
+        output_fldr=output_fldr,
+        imgs_fldr=imgs_fldr,
+        partial_df=partial_df,
+        exclude_fns=exclude_fns,
+        do_radiomics=do_radiomics,
+        dusting_threshold=dusting_threshold,
+        debug=debug,
+        n_actors=n_actors,
+        scorer_ray_cls=BatchScorerRayITK,
+    )
+
+
+def score_preds_folder_pt(
+    gt_fns: list[Path],
+    preds_fldr: Path | list[Path],
+    ignore_labels_gt: list,
+    ignore_labels_pred: list,
+    output_fldr: Path | None = None,
+    imgs_fldr: Path | None = None,
+    partial_df: pd.DataFrame | None = None,
+    exclude_fns: list | None = None,
+    do_radiomics: bool = False,
+    dusting_threshold: int = 1,
+    debug: bool = False,
+    n_actors: int = 8,
+):
+    return _score_preds_folder(
+        gt_fns=gt_fns,
+        preds_fldr=preds_fldr,
+        ignore_labels_gt=ignore_labels_gt,
+        ignore_labels_pred=ignore_labels_pred,
+        output_fldr=output_fldr,
+        imgs_fldr=imgs_fldr,
+        partial_df=partial_df,
+        exclude_fns=exclude_fns,
+        do_radiomics=do_radiomics,
+        dusting_threshold=dusting_threshold,
+        debug=debug,
+        n_actors=n_actors,
+        scorer_ray_cls=BatchScorerRayPT,
+    )
+
+
 # %%
-    resdf = pd.concat(parts, ignore_index=True)
-    out_fn = fldr_pt.parent/("lesion_stats.csv")
+# SECTION:-------------------- SETUP--------------------------------------------------------------------------------------
+if __name__ == "__main__":
+    from fran.data.dataregistry import DS
+    from utilz.helpers import info_from_filename
 
-    resdf['case_id'] = resdf['lm_filename'].apply(split_info)
-    resdf.to_csv( out_fn, index=False)
+    if not ray.is_initialized():
+        ray.init()
 
-    df = resdf.groupby("case_id")["volume"].apply(list)
-
-    case_ids= resdf["case_id"].unique()
-
-    grouped = df.copy()
-# %%
-    vol_lists = grouped.tolist()
-
-    max_len = max(len(v) for v in vol_lists)
-
-# pad lists so matrix can be built
-    vol_matrix = []
-    for v in vol_lists:
-        padded = v + [0]*(max_len-len(v))
-        vol_matrix.append(padded)
-
-    vol_matrix = list(zip(*vol_matrix))
+    preds_fldr = Path("/s/fran_storage/predictions/kits23/KITS23-SIRIG")
+    pred_fns = sorted(preds_fldr.glob("kits23*"))
+    pred_case_ids = {
+        info_from_filename(fn.name, full_caseid=True)["case_id"] for fn in pred_fns
+    }
+    gt_fldr = DS.kits23.folder / "lms"
+    gt_fns = [
+        fn
+        for fn in sorted(gt_fldr.glob("*"))
+        if info_from_filename(fn.name, full_caseid=True)["case_id"] in pred_case_ids
+    ]
 
 # %%
-    import seaborn as sns
-    import math     
-    chunk_size = 50
-    n_chunks = math.ceil(len(case_ids) / chunk_size)
+    df = score_preds_folder_itk(
+        gt_fns=gt_fns,
+        preds_fldr=pred_fns,
+        ignore_labels_gt=[1],
+        ignore_labels_pred=[1],
+        output_fldr=preds_fldr / "results2",
+        do_radiomics=False,
+        dusting_threshold=1,
+        debug=False,
+        n_actors=8,
+    )
+# %%
+# SECTION:-------------------- PT SCORING--------------------------------------------------------------------------------------
+    from fran.managers.project import Project
+    from utilz.helpers import info_from_filename
 
+    P = Project("kits2")
 
+    _, val = P.get_train_val_case_ids(0)
+    gt_fldr = Path(
+        "/r/datasets/preprocessed/kits2/lbd/spc_080_080_150_rlb00ec4022_rlb00ec4022_ex020/lms"
+    )
+    gt_fns = sorted(gt_fldr.glob("*.pt"))
+    val_fns = [
+        fn
+        for fn in gt_fns
+        if info_from_filename(fn.name, full_caseid=True)["case_id"] in val
+    ]
+    len(val_fns)
+    ignore_labels_gt = [1]
+    ignore_labels_pred = [1]
+    # preds_fldr = Path("/s/fran_storage/predictions/kits/KITS-n7")
+    preds_fldr = Path("/s/fran_storage/predictions/kits2/KITS2-bk")
+    # gt_fns2 = gt_fns[:5]+ [Path("/r/datasets/preprocessed/kits/lbd/spc_080_080_150_rlb00ec4022_rlb00ec4022_ex020/lms/kits23_00030.pt")]
+
+    pred_fns = [
+        fn
+        for fn in preds_fldr.glob("*")
+        if info_from_filename(fn.name, full_caseid=True)["case_id"] in val
+    ]
+    print(len(pred_fns))
+
+# %%
+    gt_fns = val_fns
+    df = score_preds_folder_pt(
+        gt_fns=gt_fns,
+        preds_fldr=preds_fldr,
+        ignore_labels_gt=ignore_labels_gt,
+        ignore_labels_pred=ignore_labels_pred,
+        output_fldr=preds_fldr / "results",
+        do_radiomics=False,
+        dusting_threshold=1,
+        debug=False,
+    )
+
+# %%
+    df_TW = pd.read_excel(
+        "/s/fran_storage/predictions/kits/KITS-TW/results/results_thresh1mm_results1.xlsx"
+    )
+    df2 = pd.read_excel(
+        "/s/fran_storage/predictions/kits/KITS-bl/results/results_thresh1mm_all.xlsx"
+    )
+    df.to_csv("bl_all.csv")
+# %%
+    df_TW.columns
+    len(df_TW.groupby("case_id"))
+
+    df.loc[df["case_id"] == "kits23_00030", "dsc"]
+    df2.loc[df2["case_id"] == "kits23_00030", "dsc"].unique()
+
+    df2.dropna(subset=["dsc"], inplace=True)
+    df2["dsc"].unique()
+
+    tbl = (
+        (df2.dropna(subset=["dsc"]))
+        .agg(["count", "mean", "std", "min", "max"])
+        .reset_index()
+    )
+# %%
+    dfbl = df[["case_id", "dsc_overall"]].drop_duplicates("case_id")
+    dft2 = df_TW[["case_id", "dsc_overall"]].drop_duplicates("case_id")
+
+    dfbl_tw = dfbl.merge(on="case_id", how="outer", right=dft2, suffixes=("_bl", "_tw"))
+
+    dfbl_tw.to_csv("comp_all.csv")
+    mn = dfbl_tw["dsc_overall_bl"].median()
+    mn2 = dfbl_tw["dsc_overall_tw"].median()
+# %%
+    table = (
+        df.dropna(subset=["dsc"])
+        .groupby("case_id")["dsc_overall"]
+        .unique()
+        .agg(["count", "mean", "std", "min", "max"])
+        .reset_index()
+    )
+# %%
+    df2.to_csv("bl.csv")
 # %%

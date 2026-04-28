@@ -1,8 +1,8 @@
-require(colorout)
-library(ggplot2)
+# %%
 library(dplyr)
 library(purrr)
 library(tidyr)
+library(readxl)
 setwd("/home/ub/code/mask_analysis/rstats")
 
 # folder <-"/s/fran_storage/predictions/lits/ensemble_LITS-408_LITS-385_LITS-383_LITS-357"
@@ -11,14 +11,20 @@ folder <-"/s/fran_storage/predictions/lits/ensemble_LITS-451_LITS-452_LITS-453_L
 dfn <-file.path(folder,"results_all_small.csv")
 df2n <-"../results/results.csv"
 
+folder <-"/s/fran_storage/predictions/kits23/KITS23-SIRIG/results_fold1"
+dfs_n<-file.path(folder,"results_thresh1mm_all.xlsx")
+dfs_n<-file.path(folder,"results_fold1_thresh1mm_results1.xlsx")
+df <- read_excel(dfs_n)
 # %%  functions
 
+# %%
 grep_names  <- function(x,names) names[grep(x,names)]
 max_dsc <-function(row){
   vals <-row[dsc_labels]
   maxval<-max(vals[!is.na(vals)])
   return(as.numeric(maxval))
 }
+# %%
 # %%
 
 df1 <-read.csv(dfn,stringsAsFactors=TRUE)

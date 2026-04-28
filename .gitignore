@@ -17,6 +17,8 @@ __pycache__/
 *.obj
 !testfiles/gt.nii.gz
 !testfiles/pred.nii.gz
+!files/**/*.nii*
+!files/**/*.nrrd
 *.egg-info
 build/
 dist/
@@ -58,3 +60,6 @@ ipython_config.py
 tmp/
 tmp*/
 .cache/
+
+# .gitignore cannot ignore by file size. A repo-local pre-commit hook in
+# .githooks/pre-commit rejects staged files larger than 10 MiB.

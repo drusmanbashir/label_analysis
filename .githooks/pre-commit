@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+limit_bytes=$((10 * 1024 * 1024))
+
+fail=0
+while IFS= read -r -d '' path; do
+  size="$(git cat-file -s ":$path")"
+  if [ "$size" -gt "$limit_bytes" ]; then
+    printf 'staged file exceeds 10 MiB: %s (%s bytes)\n' "$path" "$size" >&2
+    fail=1
+  fi
+done < <(git diff --cached --name-only --diff-filter=AM -z)
+
+if [ "$fail" -ne 0 ]; then
+  printf 'commit blocked by .githooks/pre-commit large-file limit\n' >&2
+  exit 1
+fi

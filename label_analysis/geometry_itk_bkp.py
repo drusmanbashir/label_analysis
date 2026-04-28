@@ -45,54 +45,32 @@ pd.set_option("display.expand_frame_repr", False)
 
 @dataclass
 class LabelGroup:
+    ind: int
+    obj: itk.StatisticsLabelObject[itk.UL, 3]
+    lm: itk.LabelMap[itk.StatisticsLabelObject[itk.UL, 3]]
     label_org: int
-    lmap: itk.LabelMap[itk.StatisticsLabelObject[itk.UL, 3]]
-    cc_index: set[int] = field(default_factory=set)
-    enforce_unique_label_cc: bool = True
+    lm_key: int
 
-    @property
-    def label_ccs(self):
-        return {
-            int(self.lmap.GetNthLabelObject(i).GetLabel())
-            for i in range(self.lmap.GetNumberOfLabelObjects())
-        }
-
-    def remap_cc(self, remap: dict[int, int]):
-        self.lmap = relabel_lmap(self.lmap, remap)
-
-    def assign_cc_index(self, cc_index, enforce_unique_label_cc=True):
-        self.cc_index = set(cc_index)
-        self.enforce_unique_label_cc = enforce_unique_label_cc
-        if enforce_unique_label_cc:
-            src = sorted(self.label_ccs)
-            dst = sorted(self.cc_index)
-            remap = {src_label: dst_label for src_label, dst_label in zip(src, dst)}
-            self.remap_cc(remap)
-        return self
-
-    def remove_cc(self, label_cc: int):
-        self.lmap.RemoveLabel(int(label_cc))
-        self.cc_index.remove(int(label_cc))
+    def relabel(self, new_label: int):
+        self.obj.SetLabel(new_label)
 
 @dataclass
 class LabelGroups:
-    groups: list[LabelGroup]
-    enforce_unique_label_cc: bool = True
-    by_label_org: dict[int, LabelGroup] = field(init=False, repr=False)
-    by_cc: dict[int, LabelGroup] = field(init=False, repr=False)
+    objs: list[LabelGroup]
+    inds: list[int]
+    _map: dict[int, LabelGroup] = field(init=False, repr=False)
 
     def __post_init__(self):
-        self.rebuild()
+        self._map = {o.ind: o for o in self.objs}
 
-    def rebuild(self):
-        self.by_label_org = {group.label_org: group for group in self.groups}
-        self.by_cc = {}
-        for group in self.groups:
-            for label_cc in group.label_ccs:
-                self.by_cc[int(label_cc)] = group
+    def __getitem__(self, ind):
+        return self._map[ind]
 
-    def __getitem__(self, label_cc):
-        return self.by_cc[int(label_cc)]
+    def remove(self, ind: int):
+        idx = self.inds.index(ind)
+        self.inds.pop(idx)
+        self.objs.pop(idx)
+        del self._map[ind]
 
 
 def relabel_lmap(lmap,remap):
@@ -182,7 +160,6 @@ class LabelMapGeometryITK(LabelMapGeometry):
     ):
 
         self.unique_lms = []
-        self.li_fk = None
         if isinstance(li, itk.Image):
             self.li_fn = None
             self.li_org = li
@@ -218,21 +195,42 @@ class LabelMapGeometryITK(LabelMapGeometry):
         self.key = {}
         self.unique_lms = []
         self.unique_lms_index_by_label_org = {}
-        groups = []
+        label_objs = []
         labels_org = get_labels_itk(self.li_org)
+        self.li_cc = _alloc_cc_image(self.li_org)
         label_cont = 1
         for lab in labels_org:
             lmap = label_to_labelmap(self.li_org, lab, self.compute_feret)
-            n_islands = lmap.GetNumberOfLabelObjects()
-            cc_index = range(label_cont, label_cont + n_islands)
-            group = LabelGroup(label_org=int(lab), lmap=lmap)
-            group.assign_cc_index(cc_index=cc_index, enforce_unique_label_cc=True)
-            groups.append(group)
-            label_cont += n_islands
-        self.label_groups = LabelGroups(groups=groups, enforce_unique_label_cc=True)
-        self._sync_unique_lms()
-        self._create_out_image()
-
+            remap ={}
+            for i in range(lmap.GetNumberOfLabelObjects()):
+                obj = lmap.GetNthLabelObject(i)
+                lm_key = int(obj.GetLabel())
+                remap[lm_key] = label_cont
+                self.key[label_cont] = lab
+                label_objs.append(
+                    LabelGroup(
+                        ind=label_cont,
+                        obj=obj,
+                        lm=lmap,
+                        label_org=int(lab),
+                        lm_key=lm_key,
+                    )
+                )
+                label_cont += 1
+            lmap = relabel_lmap(lmap, remap)
+            self.unique_lms.append(
+                {
+                    "lmap": lmap,
+                    "label_org": lab,
+                    "n_islands": lmap.GetNumberOfLabelObjects(),
+                }
+            )
+            self.unique_lms_index_by_label_org[int(lab)] = len(self.unique_lms) - 1
+            self.li_cc = _merge_labelmap_into(self.li_cc, lmap)
+        self.label_objs = LabelGroups(
+            objs=label_objs,
+            inds=[label_obj.ind for label_obj in label_objs],
+        )
 
     def remap_li_cc(self, remapping):
         F = itk.ChangeLabelImageFilter[self.li_cc,self.li_cc].New(self.li_cc)
@@ -241,11 +239,6 @@ class LabelMapGeometryITK(LabelMapGeometry):
         F.Update()
         li_cc_new = F.GetOutput()
         return li_cc_new
-
-    def set_li_fk(self, remapping):
-        li_fk = self.remap_li_cc(remapping)
-        self.li_fk = ConvertItkImageToSimpleItkImage(li_fk, sitk.sitkUInt32)
-        return self.li_fk
 
 
     def calc_geom(self):
@@ -318,7 +311,6 @@ class LabelMapGeometryITK(LabelMapGeometry):
         self.nbrhoods["volume"] = self.nbrhoods["volume_cc"]
         self.nbrhoods["label_org"] = self.nbrhoods["label_org"].astype("Int64")
 
-
     def _relabel_li_cc(self, remapping, verbose=True):
         li_cc_sitk = ConvertItkImageToSimpleItkImage(self.li_cc, sitk.sitkUInt8)
         li_cc_sitk = relabel(li_cc_sitk, remapping)
@@ -341,39 +333,59 @@ class LabelMapGeometryITK(LabelMapGeometry):
 
     def remove_labels_from_df(self, labels):
         labels = listify(labels)
+        remapping = {x: 0 for x in labels}
         print("Removing labels {0}".format(labels))
-        for label_cc in labels:
-            group = self.label_groups[int(label_cc)]
-            group.remove_cc(int(label_cc))
-        self.label_groups.rebuild()
-        self._sync_unique_lms()
-        self._create_out_image()
+        self._relabel_li_cc(remapping)
         self.nbrhoods = self.nbrhoods[~self.nbrhoods["label_cc"].isin(labels)]
         self.nbrhoods.reset_index(inplace=True, drop=True)
+        for l in labels:
+            del self.key[l]
         logging.warning("Neighbourhoods adjusted. {0} removed".format(labels))
         if self.is_empty():
             self.nbrhoods = make_zero_df(self.nbrhoods.columns)
 
+    def _get_unique_lms_index(self, label_org):
+        try:
+            return self.unique_lms_index_by_label_org[int(label_org)]
+        except (AttributeError, KeyError) as exc:
+            available = [int(lm["label_org"]) for lm in getattr(self, "unique_lms", [])]
+            raise IndexError(
+                "Could not map label_org={} to self.unique_lms. Available label_org "
+                "values: {}. This usually means labels are sparse after filtering or "
+                "ignore-label removal, so label_org cannot be used as a positional index.".format(
+                    int(label_org), available
+                )
+            ) from exc
+
     def remove_labelobjects(self, df_inds):
         if len(df_inds) > 0:
             nbr_tmp = self.nbrhoods.iloc[df_inds].copy()
-            for _, row in nbr_tmp.iterrows():
+            for ind, row in nbr_tmp.iterrows():
                 label_cc = int(row["label_cc"])
-                group = self.label_groups[label_cc]
-                group.remove_cc(label_cc)
-            self.label_groups.rebuild()
-            self._sync_unique_lms()
+                label_obj = self.label_objs[label_cc]
+                label_org = int(label_obj.label_org)
+                lm_ind = self._get_unique_lms_index(label_org)
+                lmap = self.unique_lms[lm_ind]["lmap"]
+                lmap.RemoveLabel(label_obj.lm_key)
+                self.label_objs.remove(label_cc)
+                dici = {
+                    "lmap": lmap,
+                    "label_org": label_org,
+                    "n_islands": lmap.GetNumberOfLabelObjects(),
+                }
+                self.unique_lms[lm_ind] = dici
             self._create_out_image()
 
     def _create_out_image(self):
         lis = []
         self.li_cc = _alloc_cc_image(self.li_org)
-        for group in self.label_groups.groups:
-            self.li_cc = _merge_labelmap_into(self.li_cc, group.lmap)
+        for lm1 in self.unique_lms:
+            lmap1 = lm1["lmap"]
+            self.li_cc = _merge_labelmap_into(self.li_cc, lmap1)
             instance = itk.LabelMapToBinaryImageFilter[
                 itk.LabelMap[itk.StatisticsLabelObject[itk.UL, 3]], itk.Image[itk.UC, 3]
-            ].New(group.lmap)
-            instance.SetForegroundValue(group.label_org)
+            ].New(lmap1)
+            instance.SetForegroundValue(lm1["label_org"])
             instance.Update()
             out = instance.GetOutput()
             lis.append(out)
@@ -383,22 +395,6 @@ class LabelMapGeometryITK(LabelMapGeometry):
             self.li_out = lis[0]
         else:
             self.li_out = None
-
-    def _sync_unique_lms(self):
-        self.unique_lms = []
-        self.unique_lms_index_by_label_org = {}
-        self.key = {}
-        for i, group in enumerate(self.label_groups.groups):
-            self.unique_lms.append(
-                {
-                    "lmap": group.lmap,
-                    "label_org": int(group.label_org),
-                    "n_islands": group.lmap.GetNumberOfLabelObjects(),
-                }
-            )
-            self.unique_lms_index_by_label_org[int(group.label_org)] = i
-            for label_cc in group.label_ccs:
-                self.key[int(label_cc)] = int(group.label_org)
 
     def __len__(self):
         return len(self.nbrhoods)
@@ -410,10 +406,6 @@ class LabelMapGeometryITK(LabelMapGeometry):
     @property
     def li_cc_sitk(self):
         return ConvertItkImageToSimpleItkImage(self.li_cc, sitk.sitkUInt32)
-
-    @property
-    def li_fk_sitk(self):
-        return self.li_fk
 
     @property
     def labels(self):
@@ -492,10 +484,18 @@ if __name__ == "__main__":
         "/s/fran_storage/predictions/nodes/LITS-1405_LITS-1416_LITS-1417/nodes_n1_Ta80605_CAP1p5mm.nii.gz",
     ]
 
+    gt_fn = Path("/Users/ub/datasets/kits23/lms/kits23_00568.nii.gz")
+    gt_fn = Path("/media/UB/datasets/kits23/lms/kits23_00037.nii.gz")
 
 # %%
+    outfldr = Path("/Users/ub/datasets/tmp")
+    maybe_makedirs(outfldr)
+    out_fn = outfldr / (gt_fn.name)
+
+    org_fn = outfldr / ("org.nii.gz")
+    sitk_fn = outfldr / ("kits23_00568_sitk.nii.gz")
     gt_fn = Path('/media/UB/datasets/kits23/lms/kits23_00121.nii.gz')
-    gt_fn = Path("/media/UB/datasets/kits23/lms/kits23_00037.nii.gz")
+    gt_fn = Path("/media/UB/datasets/kits23/lms/kits23_00023.nii.gz")
     pred_fn = Path('/s/fran_storage/predictions/kits2/KITS2-bah/kits23_00121.nii.gz')
 # %%
     L = LabelMapGeometryITK(gt_fn, ignore_labels=[1], compute_feret=False)
@@ -523,11 +523,18 @@ if __name__ == "__main__":
     nbr_tmp = L.nbrhoods.iloc[df_inds].copy()
     for ind, row in nbr_tmp.iterrows():
         label_cc = int(row["label_cc"])
-        group = L.label_groups[label_cc]
-        group.remove_cc(label_cc)
-    L.label_groups.rebuild()
-    L._sync_unique_lms()
-    L._create_out_image()
+        label_obj = L.label_objs[label_cc]
+        label_org = int(label_obj.label_org)
+        lm_ind = L._get_unique_lms_index(label_org)
+        lmap = L.unique_lms[lm_ind]["lmap"]
+        lmap.RemoveLabel(label_obj.lm_key)
+        L.label_objs.remove(label_cc)
+        dici = {
+            "lmap": lmap,
+            "label_org": label_org,
+            "n_islands": lmap.GetNumberOfLabelObjects(),
+        }
+        L.unique_lms[lm_ind] = dici
 
     L.nbrhoods = L.nbrhoods.drop(inds_small_final)
 
