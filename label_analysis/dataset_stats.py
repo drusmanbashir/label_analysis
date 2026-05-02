@@ -19,6 +19,7 @@ import numpy as np
 import pandas as pd
 import ray
 from utilz.helpers import *
+from utilz.rayz import shutdown_actors
 
 from label_analysis.helpers import *
 
@@ -65,7 +66,10 @@ def lms_folder_statistics(
         )
         futures.append(res)
 
-    parts = ray.get(futures)
+    try:
+        parts = ray.get(futures)
+    finally:
+        shutdown_actors(actors)
     resdf = _concat_valid_frames(parts)
 
     if "lm_filename" in resdf.columns:

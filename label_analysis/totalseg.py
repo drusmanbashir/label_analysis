@@ -184,6 +184,24 @@ class TotalSegmenterLabels:
     def label_minimal(self):
         return self.df.label_minimal.to_list()
 
+    def _make_structure(self, structure: str, rows: pd.DataFrame) -> Structure:
+        label_loc = rows.label_region.unique().tolist()
+        label = rows.label_full.unique().tolist()
+        label_min = rows.label_minimal.unique().tolist()
+        name_region = rows.name_region.unique().tolist()
+        SN = Structure(
+            name=structure,
+            label_full=label,
+            label_region=label_loc,
+            label_minimal=label_min,
+            name_region=name_region,
+        )
+        return SN
+
+    @property
+    def all(self) -> Structure:
+        return self._make_structure("all", self.df)
+
     def __getattr__(self, structure: str):
         """
         Dynamic access:
@@ -191,21 +209,11 @@ class TotalSegmenterLabels:
         """
 
         df = self.df
-        for str_cols in ["name_full","structure","name_region","name_minimal"]:
+        lookup_cols = ["name_full", "structure", "name_region", "name_minimal"]
+        for str_cols in [col for col in lookup_cols if col in df.columns]:
             rows = df.loc[df[str_cols] == structure]
             if len(rows) > 0:
-                label_loc = rows.label_region.unique().tolist()
-                label = rows.label_full.unique().tolist()
-                label_min = rows.label_minimal.unique().tolist()
-                name_region = rows.name_region.unique().tolist()
-                SN = Structure(
-                    name=structure,
-                    label_full=label,
-                    label_region=label_loc,
-                    label_minimal=label_min,
-                    name_region=name_region,
-                )
-                return SN
+                return self._make_structure(structure, rows)
 
         print(f"Structure {structure} not found")
         raise AttributeError(
@@ -399,4 +407,3 @@ if __name__ == "__main__":
 # %%
 
 # %%
-

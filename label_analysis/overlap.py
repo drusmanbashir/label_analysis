@@ -144,7 +144,7 @@ class ScorerLabelMaps:
         lmp: Union[str, Path],
         ignore_labels_g=[],
         ignore_labels_p=[],
-        detection_threshold=0.2,
+        multiclass_dsc=False,
         dusting_threshold=0,
         save_matrices=True,
         output_folder=None,
@@ -152,6 +152,9 @@ class ScorerLabelMaps:
         """
         params_fn: specifies radiomics params
         save_matrices: if true, save full dsc and jac matrices in a separate file
+        multiclass_dsc: if False, compute dsc across all bbox-overlapping lesions
+        regardless of class. If True, restrict dsc pairing to lesions of the same
+        class.
         """
 
         self.LG = LabelMapGeometry(lmg, ignore_labels_g)
@@ -162,8 +165,8 @@ class ScorerLabelMaps:
         self.lmp = lmp
         self.ignore_labels_g = ignore_labels_g
         self.ignore_labels_p = ignore_labels_p
-        self.detection_threshold = detection_threshold
         self.dusting_threshold = dusting_threshold
+        self.multiclass_dsc = multiclass_dsc
         self.save_matrices = save_matrices
         self.output_folder = output_folder
 
@@ -173,7 +176,6 @@ class ScorerLabelMaps:
         self.compute_overlap_perlesion()
         self.make_one_to_one_dsc()
         self.compute_overlap_overall()
-        self.cont_tables()
         return self.create_df_full()
 
     @property
@@ -270,16 +272,6 @@ class ScorerLabelMaps:
             colnames.append(colname)
         return colnames
 
-    def cont_tables(self):
-        """
-        param detection_threshold: jaccard b/w lab_mask and lab_ored below this will be counted as a false negative
-        """
-        if self.LP.nbrhoods.empty:
-            self.fp_pred_labels = []
-        else:
-            tt = self.dsc <= self.detection_threshold
-            fp_pred_inds = list(np.where(np.all(tt == True, 0))[0])
-            self.fp_pred_labels = list(self.LP.nbrhoods.iloc[fp_pred_inds]["label_cc"])
 
     def gt_radiomics(self, debug):
         if len(self.labs_gt) == 0:  # or self.do_radiomics == False:
@@ -381,8 +373,8 @@ class ScorerFiles(ScorerLabelMaps):
         params_fn=None,
         ignore_labels_gt=[],
         ignore_labels_pred=[],
-        detection_threshold=0.2,
         dusting_threshold=0,
+        multiclass_dsc=False,
         do_radiomics=False,
         save_matrices=True,
         output_folder=None,
@@ -412,8 +404,8 @@ class ScorerFiles(ScorerLabelMaps):
         self.params_fn = params_fn
         self.ignore_labels_gt = ignore_labels_gt
         self.ignore_labels_pred = ignore_labels_pred
-        self.detection_threshold = detection_threshold
         self.dusting_threshold = dusting_threshold
+        self.multiclass_dsc = multiclass_dsc
         self.do_radiomics = do_radiomics
         self.save_matrices = save_matrices
         self.output_folder = output_folder
@@ -427,7 +419,6 @@ class ScorerFiles(ScorerLabelMaps):
                 self.compute_overlap_perlesion()
                 self.make_one_to_one_dsc()
             self.gt_radiomics(debug)
-            self.cont_tables()
             return self.create_df_full()
 
         except Exception as e:
@@ -460,9 +451,12 @@ class ScorerFiles(ScorerLabelMaps):
         bboxes_lg = self.LG.nbrhoods["bbox"]
         bboxes_lp = self.LP.nbrhoods["bbox"]
         prox_inds = proximity_indices2(bboxes_lg, bboxes_lp)
-        lg_org = self.LG.nbrhoods.iloc[prox_inds[:, 0]]["label_org"].to_numpy()
-        lp_org = self.LP.nbrhoods.iloc[prox_inds[:, 1]]["label_org"].to_numpy()
-        keep = lg_org == lp_org
+        if self.multiclass_dsc == False:
+            keep = np.ones(len(prox_inds), dtype=bool)
+        else:
+            lg_org = self.LG.nbrhoods.iloc[prox_inds[:, 0]]["label_org"].to_numpy()
+            lp_org = self.LP.nbrhoods.iloc[prox_inds[:, 1]]["label_org"].to_numpy()
+            keep = lg_org == lp_org
         prox_inds = prox_inds[keep]
         nbr1 = self.LG.nbrhoods.iloc[prox_inds[:, 0]]["label_cc"]
         nbr2 = self.LP.nbrhoods.iloc[prox_inds[:, 1]]["label_cc"]
@@ -480,16 +474,6 @@ class ScorerFiles(ScorerLabelMaps):
             colnames.append(colname)
         return colnames
 
-    def cont_tables(self):
-        """
-        param detection_threshold: jaccard b/w lab_mask and lab_ored below this will be counted as a false negative
-        """
-        if self.LP.nbrhoods.empty:
-            self.fp_pred_labels = []
-        else:
-            tt = self.dsc <= self.detection_threshold
-            fp_pred_inds = list(np.where(np.all(tt == True, 0))[0])
-            self.fp_pred_labels = list(self.LP.nbrhoods.iloc[fp_pred_inds]["label_cc"])
 
     def insert_fks(self, df, dummy_fk, inds, fks):
         repeat_rows = []
@@ -873,8 +857,8 @@ class ScorerAdvancedITK(ScorerAdvanced):
         params_fn=None,
         ignore_labels_gt=[],
         ignore_labels_pred=[],
-        detection_threshold=0.2,
         dusting_threshold=0,
+        multiclass_dsc=False,
         do_radiomics=False,
         save_matrices=True,
         save_graph=True,
@@ -902,8 +886,8 @@ class ScorerAdvancedITK(ScorerAdvanced):
         self.params_fn = params_fn
         self.ignore_labels_gt = ignore_labels_gt
         self.ignore_labels_pred = ignore_labels_pred
-        self.detection_threshold = detection_threshold
         self.dusting_threshold = dusting_threshold
+        self.multiclass_dsc = multiclass_dsc
         self.do_radiomics = do_radiomics
         self.save_matrices = save_matrices
         self.save_graph = save_graph
@@ -997,6 +981,7 @@ class BatchScorer:
         output_fldr=None,
         do_radiomics=False,
         dusting_threshold=3,
+        multiclass_dsc=False,
         debug=False,
     ):
         if isinstance(gt_fns, Path):
@@ -1014,6 +999,7 @@ class BatchScorer:
         self.output_fldr = output_fldr
         self.do_radiomics = do_radiomics
         self.debug = debug
+        self.multiclass_dsc = multiclass_dsc
         self.ignore_labels_gt = ignore_labels_gt
         self.ignore_labels_pred = ignore_labels_pred
         self.dusting_threshold = dusting_threshold
@@ -1037,6 +1023,8 @@ class BatchScorer:
                     save_matrices=False,
                     do_radiomics=self.do_radiomics,
                     dusting_threshold=self.dusting_threshold,
+                    multiclass_dsc=self.multiclass_dsc,
+                    output_folder=self.output_fldr,
                 )
                 df = self.S.process(debug=self.debug)
             except Exception as e:
@@ -1155,6 +1143,7 @@ class BatchScorerWorkerITK(BatchScorer):
         output_fldr=None,
         do_radiomics=False,
         dusting_threshold=3,
+        multiclass_dsc=False,
         debug=False,
     ):
         self.output_suffix = output_suffix
@@ -1172,6 +1161,7 @@ class BatchScorerWorkerITK(BatchScorer):
             output_fldr,
             do_radiomics,
             dusting_threshold,
+            multiclass_dsc,
             debug,
         )
 

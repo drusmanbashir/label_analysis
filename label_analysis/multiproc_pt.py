@@ -4,6 +4,7 @@ import pandas as pd
 import ray
 
 from label_analysis.overlap import BatchScorerPT
+from utilz.rayz import shutdown_actors
 
 
 
@@ -90,7 +91,10 @@ def score_preds_folder_pt(
             )
         )
 
-    results = ray.get(futures)
+    try:
+        results = ray.get(futures)
+    finally:
+        shutdown_actors(actors)
     df = pd.concat(results, ignore_index=True)
     output_fn = output_fldr / f"{output_fldr.name}_thresh{dusting_threshold}mm_all.xlsx"
     df.to_excel(output_fn, index=False)

@@ -14,6 +14,7 @@ from label_analysis.overlap import BatchScorerWorkerITK, BatchScorerWorkerPT
 from label_analysis.radiomics_setup import *
 from utilz.cprint import cprint
 from utilz.helpers import *
+from utilz.rayz import shutdown_actors
 
 itk.MultiThreaderBase.SetGlobalDefaultNumberOfThreads(8)
 
@@ -200,11 +201,11 @@ class BatchScorerWorkerRay:
         ignore_labels_pred: list,
         imgs_fldr: Path = None,
         partial_df: pd.DataFrame = None,
-        exclude_fns=[],
-        output_fldr=None,
-        do_radiomics=False,
-        dusting_threshold=1,
-        debug=False,
+        exclude_fns: list | None = None,
+        output_fldr: Path | None = None,
+        do_radiomics: bool = False,
+        dusting_threshold: int = 1,
+        debug: bool = False,
         batch_scorer_cls=BatchScorerWorkerITK,
     ):
         print("process {} ".format(self.actor_id))
@@ -217,6 +218,7 @@ class BatchScorerWorkerRay:
             imgs_fldr=imgs_fldr,
             partial_df=partial_df,
             exclude_fns=exclude_fns,
+            output_fldr=output_fldr,
             do_radiomics=do_radiomics,
             dusting_threshold=dusting_threshold,
             debug=debug,
@@ -298,7 +300,11 @@ class BatchScorerRayITK:
                 )
             )
 
-        results = ray.get(futures)
+        try:
+            results = ray.get(futures)
+        finally:
+            shutdown_actors(self.actors)
+            self.actors = []
         df = pd.concat(results, ignore_index=True)
         output_fn = (
             self.output_fldr
@@ -313,36 +319,59 @@ class BatchScorerRayPT(BatchScorerRayITK):
     batch_scorer_cls = BatchScorerWorkerPT
 
 
-def _score_preds_folder(
-    gt_fns: list[Path],
-    preds_fldr: Path | list[Path],
-    ignore_labels_gt: list,
-    ignore_labels_pred: list,
-    output_fldr: Path | None = None,
-    imgs_fldr: Path | None = None,
-    partial_df: pd.DataFrame | None = None,
-    exclude_fns: list | None = None,
-    do_radiomics: bool = False,
-    dusting_threshold: int = 1,
-    debug: bool = False,
-    n_actors: int = 8,
-    scorer_ray_cls=BatchScorerRayITK,
-):
-    scorer = scorer_ray_cls(
-        gt_fns=gt_fns,
-        preds_fldr=preds_fldr,
-        ignore_labels_gt=ignore_labels_gt,
-        ignore_labels_pred=ignore_labels_pred,
-        output_fldr=output_fldr,
-        imgs_fldr=imgs_fldr,
-        partial_df=partial_df,
-        exclude_fns=exclude_fns,
-        do_radiomics=do_radiomics,
-        dusting_threshold=dusting_threshold,
-        debug=debug,
-        n_actors=n_actors,
-    )
-    return scorer.process()
+class ScorePredsFolder:
+    def __init__(
+        self,
+        gt_fns: list[Path],
+        preds_fldr: Path | list[Path],
+        ignore_labels_gt: list,
+        ignore_labels_pred: list,
+        output_fldr: Path | None = None,
+        imgs_fldr: Path | None = None,
+        partial_df: pd.DataFrame | None = None,
+        exclude_fns: list | None = None,
+        do_radiomics: bool = False,
+        dusting_threshold: int = 1,
+        debug: bool = False,
+        n_actors: int = 8,
+        pt: bool = False,
+    ):
+        self.gt_fns = gt_fns
+        self.preds_fldr = preds_fldr
+        self.ignore_labels_gt = ignore_labels_gt
+        self.ignore_labels_pred = ignore_labels_pred
+        self.output_fldr = output_fldr
+        self.imgs_fldr = imgs_fldr
+        self.partial_df = partial_df
+        self.exclude_fns = exclude_fns
+        self.do_radiomics = do_radiomics
+        self.dusting_threshold = dusting_threshold
+        self.debug = debug
+        self.n_actors = n_actors
+        self.pt = pt
+
+    @property
+    def scorer_ray_cls(self):
+        if self.pt:
+            return BatchScorerRayPT
+        return BatchScorerRayITK
+
+    def process(self):
+        scorer = self.scorer_ray_cls(
+            gt_fns=self.gt_fns,
+            preds_fldr=self.preds_fldr,
+            ignore_labels_gt=self.ignore_labels_gt,
+            ignore_labels_pred=self.ignore_labels_pred,
+            output_fldr=self.output_fldr,
+            imgs_fldr=self.imgs_fldr,
+            partial_df=self.partial_df,
+            exclude_fns=self.exclude_fns,
+            do_radiomics=self.do_radiomics,
+            dusting_threshold=self.dusting_threshold,
+            debug=self.debug,
+            n_actors=self.n_actors,
+        )
+        return scorer.process()
 
 
 def score_preds_folder_itk(
@@ -359,7 +388,7 @@ def score_preds_folder_itk(
     debug: bool = False,
     n_actors: int = 8,
 ):
-    return _score_preds_folder(
+    return ScorePredsFolder(
         gt_fns=gt_fns,
         preds_fldr=preds_fldr,
         ignore_labels_gt=ignore_labels_gt,
@@ -372,8 +401,8 @@ def score_preds_folder_itk(
         dusting_threshold=dusting_threshold,
         debug=debug,
         n_actors=n_actors,
-        scorer_ray_cls=BatchScorerRayITK,
-    )
+        pt=False,
+    ).process()
 
 
 def score_preds_folder_pt(
@@ -390,7 +419,7 @@ def score_preds_folder_pt(
     debug: bool = False,
     n_actors: int = 8,
 ):
-    return _score_preds_folder(
+    return ScorePredsFolder(
         gt_fns=gt_fns,
         preds_fldr=preds_fldr,
         ignore_labels_gt=ignore_labels_gt,
@@ -403,8 +432,8 @@ def score_preds_folder_pt(
         dusting_threshold=dusting_threshold,
         debug=debug,
         n_actors=n_actors,
-        scorer_ray_cls=BatchScorerRayPT,
-    )
+        pt=True,
+    ).process()
 
 
 # %%

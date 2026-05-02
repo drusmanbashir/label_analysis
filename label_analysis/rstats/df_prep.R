@@ -13,7 +13,7 @@ df2n <-"../results/results.csv"
 
 folder <-"/s/fran_storage/predictions/kits23/KITS23-SIRIG/results_fold1"
 dfs_n<-file.path(folder,"results_thresh1mm_all.xlsx")
-dfs_n<-file.path(folder,"results_fold1_thresh1mm_results1.xlsx")
+dfs_n<-file.path("/s/fran_storage/predictions/kits23/KITS23-SIRIG/results2/results2_thresh1mm_all.xlsx")
 df <- read_excel(dfs_n)
 # %%  functions
 
