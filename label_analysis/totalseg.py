@@ -127,8 +127,11 @@ class TotalSegmenterLabels:
             and src_labels in label_cols
             and dest_labels in label_cols
         ):
-            src_labels = getattr(self, src_labels)
-            dest_labels = getattr(self, dest_labels)
+            # Use raw dataframe columns here to preserve row alignment.
+            # The public label_* properties may drop zeros, which is fine for
+            # querying but breaks full->minimal remapping construction.
+            src_labels = self.df[src_labels].tolist()
+            dest_labels = self.df[dest_labels].tolist()
             # pairs = set(zip(src_labels,dest_labels))
         elif (
             isinstance(src_labels, str)
@@ -242,7 +245,11 @@ if __name__ == "__main__":
     rem = TSL.create_remapping("label_full", "abdomen", as_dict=True)
     TSL.create_remapping("label_region", "bladder_prostate", as_dict=True)
     TSL.create_remapping("label_minimal", "pancreas", as_dict=True)
+    TSL.create_remapping("label_minimal", "pancreas", as_dict=True)
+    aa = TSL.create_remapping("label_full", "label_minimal", as_dict=True)
+    set(aa.values())
 
+# %%
     TSL.lung
     TSL.misc
     pp(TSL.abdomen)
